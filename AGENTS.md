@@ -47,6 +47,16 @@ Contact-message calls ("call Mom and say I'll be late") stay ready without a for
 - Outbound voice uses Vapi + Twilio. Default Vapi voice: **Sagar** (`VAPI_VOICE_ID=Sagar`).
 - Twilio Trial can only call verified numbers — surface that clearly; do not 502.
 
+### Human greeting protocol — all outbound calls
+
+Do **not** dump the mission in the first sentence. Start like a real person picking up a live line.
+
+1. **First words: only "Hi"** (or "Hello") — then **wait** for them to answer.
+2. **If they don't reply** (silence / unclear pickup): "Can you hear me?" or "Hello — can you hear me?" Then wait again.
+3. **After they respond** (hello / yes / who is this): introduce yourself briefly, then the purpose of the call.
+4. **Never** open with the full order, message, or "Hi this is X I need pickup 2 idly…"
+5. Encode this in `buildMissionCallPrompt` and `firstMessage` (`backend/src/services/vapi.js`). `firstMessage` must stay a short greeting only.
+
 ### Stay on the line — never hang up mid-confusion
 
 On live calls, the voice agent must **not disconnect** just because it did not understand the other person (noise, accent, interruption, unclear answer).

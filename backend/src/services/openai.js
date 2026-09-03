@@ -421,14 +421,14 @@ Return ONLY JSON with:
   "discoveryQuery": "when the user asked for a CATEGORY of business rather than a specific one, put the search phrase here (e.g. 'car dealerships offering lease deals'). Empty string otherwise.",
   "callObjective": "what success looks like",
   "spokenBrief": "exactly what to say / convey on the call, based on the user request",
-  "firstMessageTemplate": "opening line; for message-delivery use the user's wording closely",
+  "firstMessageTemplate": "MUST be only Hi. Never put the order or message here.",
   "notesForCaller": "keep short"
 }
 
 CRITICAL RULES:
 1. If the user named a saved contact (e.g. "call Mom and say..."), category MUST be "direct_call" and target.phone MUST be that contact's number. Deliver their message.
 2. If the user provided phone number(s), dial those numbers only. Do NOT invent businesses.
-3. If they said what to say, put that in spokenBrief / firstMessageTemplate.
+3. If they said what to say, put that in spokenBrief only. firstMessageTemplate must stay "Hi." — do not dump the message as the opening line.
 4. Only search for businesses when NO phone and NO matching contact was given.
 5. Never invent phone numbers.
 6. Target names must be REAL, specific businesses (e.g. "Covert Honda Austin"), never placeholders like "Local Car Dealership" or "Nearby Insurance Agency". If you cannot name real businesses confidently, leave "targets" as [] and set "discoveryQuery" instead.
@@ -496,9 +496,7 @@ CRITICAL RULES:
     if (!plan.callObjective) {
       plan.callObjective = "Deliver the user's message and handle a short natural conversation.";
     }
-    if (!plan.firstMessageTemplate) {
-      plan.firstMessageTemplate = `Hi, this is {{name}}.`;
-    }
+    plan.firstMessageTemplate = 'Hi.';
     if (!plan.title) plan.title = 'Direct call';
     if (!plan.goal) plan.goal = 'Call the person and deliver the message';
   }

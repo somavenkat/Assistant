@@ -15,6 +15,13 @@ function headers() {
   };
 }
 
+const HUMAN_GREETING_PROTOCOL = `HOW TO START THE CALL (mandatory — like a real human):
+1. Your first spoken line is ONLY "Hi" (or "Hello"). Then STOP and wait for them.
+2. Do NOT immediately say your name, the order, or the message.
+3. If they stay silent or the pickup is unclear: say "Can you hear me?" (or "Hello — can you hear me?") and wait again.
+4. After they greet you, say yes, or ask who it is: THEN introduce yourself naturally and get to the purpose.
+5. Never dump the full request in the first breath.`;
+
 function buildMissionCallPrompt({ profile, plan, target, attachments = [] }) {
   const { formatAttachmentsForPrompt } = require('./attachments');
   const attachmentBlock = formatAttachmentsForPrompt(attachments);
@@ -25,7 +32,9 @@ function buildMissionCallPrompt({ profile, plan, target, attachments = [] }) {
 You are NOT an AI, bot, or automated system. Never say you are artificial intelligence.
 Sound natural and human.
 
-Your only job on this call:
+${HUMAN_GREETING_PROTOCOL}
+
+Your only job on this call (after they have responded):
 ${plan.callObjective || plan.goal}
 
 What to convey (follow the user's wording closely):
@@ -43,6 +52,8 @@ Never invent a different purpose for the call. Never mention Vapi, Twilio, OpenA
   return `You are a real person named ${profile.name} making a phone call to get something done.
 You are NOT an AI, assistant, bot, or automated system. Never say you are artificial intelligence.
 Sound casual, warm, and natural — like a regular customer. Use short sentences and light fillers ("um", "yeah", "perfect").
+
+${HUMAN_GREETING_PROTOCOL}
 
 Mission: ${plan.title}
 Category: ${plan.category}
@@ -78,8 +89,8 @@ CRITICAL — do not disconnect early:
 - Only end the call after the goal is done, they clearly cannot help / decline, or they say goodbye.
 
 Call flow:
-1. Greet briefly as ${profile.name}.
-2. Clearly explain what you need.
+1. Open with Hi only; wait; if no reply, "Can you hear me?"
+2. After they respond, greet as ${profile.name} and clearly explain what you need.
 3. Answer their questions using the requirements and uploaded file details. If something is unknown, say you'll confirm and keep moving.
 4. Capture concrete outcomes: price/quote, availability, confirmation number, ready time, next steps.
 5. If they cannot help, ask who can, or thank them and end politely.
@@ -164,9 +175,8 @@ function persistPhoneNumberId(id) {
 async function placeMissionCall({ profile, plan, target, attachments = [] }) {
   const phoneNumberId = await ensurePhoneNumberId();
   const systemPrompt = buildMissionCallPrompt({ profile, plan, target, attachments });
-  const firstMessage = (plan.firstMessageTemplate || `Hi, this is {{name}} — hoping you can help me with something quickly.`)
-    .replaceAll('{{name}}', profile.name)
-    .replaceAll('{{goal}}', plan.goal || '');
+  // Always a short human pickup — never the full order/message (AGENTS.md greeting protocol).
+  const firstMessage = 'Hi.';
 
   const payload = {
     assistantId: config.vapi.assistantId,
@@ -220,7 +230,7 @@ async function placeOutboundCall({ order, restaurant }) {
       requirements: [],
       callObjective: 'Place the pickup order and confirm ready time.',
       spokenBrief: order.spokenOrderSummary,
-      firstMessageTemplate: `Hi, this is {{name}} — I'd like to place a pickup order please.`,
+      firstMessageTemplate: 'Hi.',
       notesForCaller: '',
     },
     target: restaurant,

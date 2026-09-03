@@ -22,3 +22,8 @@ When changing OpenAI / Places / mission planning code:
 
 - If the callee is unclear, ask them to repeat/clarify — do not hang up mid-call.
 - See AGENTS.md "Stay on the line" and `buildMissionCallPrompt` in `backend/src/services/vapi.js`.
+
+# Human greeting on outbound calls
+
+- First utterance is only "Hi". Wait. If no reply: "Can you hear me?" Then the real purpose.
+- Do not put the order/message in `firstMessage`. See AGENTS.md "Human greeting protocol".
