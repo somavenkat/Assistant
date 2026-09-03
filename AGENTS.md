@@ -47,6 +47,16 @@ Contact-message calls ("call Mom and say I'll be late") stay ready without a for
 - Outbound voice uses Vapi + Twilio. Default Vapi voice: **Sagar** (`VAPI_VOICE_ID=Sagar`).
 - Twilio Trial can only call verified numbers — surface that clearly; do not 502.
 
+### Stay on the line — never hang up mid-confusion
+
+On live calls, the voice agent must **not disconnect** just because it did not understand the other person (noise, accent, interruption, unclear answer).
+
+1. **Ask again politely** — e.g. "Sorry, I didn't catch that — could you say that one more time?"
+2. **Clarify specifically** — ask a short yes/no or repeat-back question instead of ending the call.
+3. **Stay on the call** until the goal is done, they clearly decline, or they say goodbye.
+4. **Do not** cut the call early due to silence blips, half-heard words, or confusion.
+5. Encode this in `buildMissionCallPrompt` (`backend/src/services/vapi.js`) whenever call scripts change.
+
 ## Deploy
 
 - Production: Vercel at `assistant-six-omega.vercel.app`

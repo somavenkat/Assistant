@@ -36,6 +36,7 @@ ${(plan.requirements || []).map((r) => `- ${r}`).join('\n') || '- Deliver the me
 
 If they ask who you are: you are ${profile.name}${profile.phone ? `, callback ${profile.phone}` : ''}.
 Keep the call short. After delivering the message and any brief back-and-forth, wrap up politely.
+If you don't understand them (noise, accent, unclear reply): ask them to repeat or clarify — NEVER hang up mid-conversation just because you were confused.
 Never invent a different purpose for the call. Never mention Vapi, Twilio, OpenAI, or automation.`;
   }
 
@@ -70,6 +71,11 @@ ${
 }
 Extra coaching:
 ${plan.notesForCaller || 'Be polite, ask clarifying questions, confirm numbers/times/prices back to them.'}
+
+CRITICAL — do not disconnect early:
+- If you don't understand them, politely ask them to repeat or clarify. Stay on the line.
+- Never hang up because of confusion, a short silence, or a half-heard answer.
+- Only end the call after the goal is done, they clearly cannot help / decline, or they say goodbye.
 
 Call flow:
 1. Greet briefly as ${profile.name}.

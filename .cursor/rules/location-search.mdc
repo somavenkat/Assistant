@@ -17,3 +17,8 @@ When changing OpenAI / Places / mission planning code:
 - "call X and make a pickup order" with no menu items → ask what to order before dialing.
 - Do not use the direct-call shortcut for restaurant pickup/order placement.
 - See `needsOrderItemsBeforeCall` in `backend/src/services/openai.js` and `AGENTS.md`.
+
+# Stay on live calls
+
+- If the callee is unclear, ask them to repeat/clarify — do not hang up mid-call.
+- See AGENTS.md "Stay on the line" and `buildMissionCallPrompt` in `backend/src/services/vapi.js`.
