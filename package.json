@@ -1,0 +1,11 @@
+{
+  "name": "ai-personal-assistant",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev:api": "npm --prefix backend run dev",
+    "dev:web": "npm --prefix frontend run dev",
+    "start:api": "npm --prefix backend run start",
+    "build:web": "npm --prefix frontend run build"
+  }
+}
