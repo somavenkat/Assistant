@@ -68,9 +68,41 @@ On live calls, the voice agent must **not disconnect** just because it did not u
 
 1. **Ask again politely** — e.g. "Sorry, I didn't catch that — could you say that one more time?"
 2. **Clarify specifically** — ask a short yes/no or repeat-back question instead of ending the call.
-3. **Stay on the call** until the goal is done, they clearly decline, or they say goodbye.
+3. **Stay on the call** until the goal is done, they clearly decline *after a natural beat*, or they say goodbye.
 4. **Do not** cut the call early due to silence blips, half-heard words, or confusion.
 5. Encode this in `buildMissionCallPrompt` (`backend/src/services/vapi.js`) whenever call scripts change.
+
+### Real conversation — when to accept instantly vs ask why
+
+Talk like a real human on a live line. The model must **reason** whether the last answer is enough, or whether one natural follow-up is needed. Do **not** treat the call as a form: ask → hear first answer → hang up.
+
+#### Take it at face value (instant OK)
+
+- They already included a reason: *"Can't, I'm sick"* / *"We're closed for renovation"*.
+- A clear yes + the detail you needed: *"Yes, 6pm works"*, *"Ready in 20, $42"*.
+- They sound rushed or say they have to go.
+- Nothing important for the mission is still missing.
+
+#### Ask one short follow-up first (do not wrap up yet)
+
+- Bare decline with no reason: *"no"*, *"not today"*, *"I'm not joining"*, *"can't make it"*.
+  - Ask casually: *"Oh, how come?"* / *"Aw, any reason?"* / *"All good — something come up?"*
+- Vague: *"maybe"*, *"not sure"*, *"we'll see"* → clarify once.
+- Friend / family / invite / plan / hangout / sports (pickleball, dinner, movie, etc.): a bare *"not joining"* **must** get a light why (or *"maybe another day?"*) before goodbye — unless they already explained.
+- Business *"we can't"* / *"don't have that"* → ask alternative, who can help, or when — once — then wrap up.
+
+#### After they give a reason
+
+React like a person (*"Got it, rest up"* / *"No worries, next time"*), **then** say goodbye. Never jump from their first bare *"no"* straight to *"All right, talk later."*
+
+#### Bad vs good (real bug)
+
+- **Bad:** Sai: *"I'm not joining today."* → us: *"All right, no problem. Talk to you later."* → *"Goodbye."*
+- **Good:** Sai: *"I'm not joining today."* → us: *"Oh, how come?"* → they explain → *"Got it, no worries — maybe next time. Talk later."*
+
+Also: never say **"Can you hear me?"** after the conversation has already started, and never after you already wrapped up.
+
+Encode in `HUMAN_CONVERSATION_RULES` / `buildMissionCallPrompt` in `backend/src/services/vapi.js`.
 
 ## Deploy
 

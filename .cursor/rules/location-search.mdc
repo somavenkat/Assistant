@@ -28,3 +28,10 @@ When changing OpenAI / Places / mission planning code:
 - We say Hi first. ~5s silence (Vapi min) → "Can you hear me?" Once they speak, reply immediately (no dead air).
 - Do not volunteer "this is {name}" unless asked. Do not put the order/message in `firstMessage`.
 - See AGENTS.md "Human greeting protocol".
+
+# Real conversation — no instant exits
+
+- Bare "no" / "not joining" without a reason → ask why once, react, then wrap up. Do not instantly "talk later / goodbye".
+- Instant accept only when they already gave a reason, answered the full ask, or are clearly rushing off.
+- Never "Can you hear me?" after the chat has started or after goodbye.
+- See AGENTS.md "Real conversation — when to accept instantly vs ask why" and `HUMAN_CONVERSATION_RULES` in `vapi.js`.

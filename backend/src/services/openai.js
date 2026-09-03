@@ -432,7 +432,8 @@ CRITICAL RULES:
 4. Only search for businesses when NO phone and NO matching contact was given.
 5. Never invent phone numbers.
 6. Target names must be REAL, specific businesses (e.g. "Covert Honda Austin"), never placeholders like "Local Car Dealership" or "Nearby Insurance Agency". If you cannot name real businesses confidently, leave "targets" as [] and set "discoveryQuery" instead.
-7. Keep maxTargets <= 3.`;
+7. Keep maxTargets <= 3.
+8. For invites/plans/questions to people (pickleball, dinner, hangout, etc.), callObjective and notesForCaller must say: if they decline without a reason, ask why once, react, then wrap up — do not instantly goodbye.`;
 
   const completion = await client.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -494,7 +495,12 @@ CRITICAL RULES:
   if (plan.category === 'direct_call') {
     if (!plan.spokenBrief) plan.spokenBrief = request;
     if (!plan.callObjective) {
-      plan.callObjective = "Deliver the user's message and handle a short natural conversation.";
+      plan.callObjective =
+        "Have a natural conversation: deliver the ask, and if they decline without a reason ask why once, react briefly, then wrap up.";
+    }
+    if (!plan.notesForCaller) {
+      plan.notesForCaller =
+        'Do not instantly goodbye on a bare no/not joining — ask how come, then end warmly.';
     }
     plan.firstMessageTemplate = 'Hi.';
     if (!plan.title) plan.title = 'Direct call';
