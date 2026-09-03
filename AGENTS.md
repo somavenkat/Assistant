@@ -30,6 +30,18 @@ When the user asks to call / order from a **named restaurant or business**, look
 - Do **not** ask the user for facts the **callee** should answer on the phone ("what did Sai eat?").
 - Ask the user only for details that **block dialing** (who to call if unknown, order items for a pickup we are placing, etc.).
 
+### Pickup / restaurant orders — ask before dialing
+
+When the user wants a **pickup, takeout, or food order** and has **not** named items:
+
+1. **Do not dial yet.** Ask what to order (items + quantities). Optional: special requests.
+2. Example that must ask first: *"call Hastag India near me and make a pickup order"*
+3. Example that can dial immediately: *"pickup 2 idly and 1 masala dosa from Hastag India"*
+4. Hard rule lives in `needsOrderItemsBeforeCall` / `clarifyRequest` in `backend/src/services/openai.js`.
+5. Direct-call shortcuts (`canPlaceDirectCall`) must **not** apply to restaurant order placement.
+
+Contact-message calls ("call Mom and say I'll be late") stay ready without a form.
+
 ## Voice / telephony
 
 - Outbound voice uses Vapi + Twilio. Default Vapi voice: **Sagar** (`VAPI_VOICE_ID=Sagar`).

@@ -125,8 +125,8 @@ export default function Home() {
     try {
       const clarifications = allAnswers();
 
-      // After one question round, or if the user skipped — place the call.
-      if (skipQuestions || askedOnce) {
+      // Explicit skip only — do not auto-dial just because questions were already shown.
+      if (skipQuestions) {
         await startMission(dryRun, clarifications);
         return;
       }
@@ -142,10 +142,12 @@ export default function Home() {
       if (!clarification.ready && clarification.questions.length > 0) {
         setPriorAnswers(clarifications);
         setQuestions(clarification.questions);
-        setAnswers({});
         setAskedOnce(true);
         setFinalBrief('');
         setSummaryBullets([]);
+        if (askedOnce && clarifications.length === 0) {
+          setError('Please type what you want to order (or tap Skip — just call).');
+        }
         return;
       }
 
@@ -157,10 +159,10 @@ export default function Home() {
       await startMission(dryRun, clarifications);
     } catch (e: any) {
       const extraQuestions = e?.data?.questions;
-      if (e?.status === 422 && Array.isArray(extraQuestions) && extraQuestions.length && !askedOnce) {
+      if (e?.status === 422 && Array.isArray(extraQuestions) && extraQuestions.length) {
         setQuestions(extraQuestions);
         setAskedOnce(true);
-        setError('');
+        setError('Please answer these before we dial (or tap Skip — just call).');
         return;
       }
       const msg =

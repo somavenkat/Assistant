@@ -1,5 +1,5 @@
 ---
-description: Always bias business/restaurant search to the user's profile location
+description: Always bias business/restaurant search to the user's profile location; ask order items before pickup dials
 alwaysApply: true
 ---
 
@@ -11,3 +11,9 @@ When changing OpenAI / Places / mission planning code:
 - ALWAYS pass `profile.area`, `profile.latitude`, and `profile.longitude` into search.
 - Prefer the nearest location within ~20–25 miles; reject hours-away franchise hits (e.g. Prosper when user is in Liberty Hill).
 - See root `AGENTS.md` and `backend/src/services/location.js`.
+
+# Pickup orders need items first
+
+- "call X and make a pickup order" with no menu items → ask what to order before dialing.
+- Do not use the direct-call shortcut for restaurant pickup/order placement.
+- See `needsOrderItemsBeforeCall` in `backend/src/services/openai.js` and `AGENTS.md`.

@@ -140,11 +140,74 @@ function isDirectCallRequest(request = '') {
   );
 }
 
+/** User wants US to place a food/restaurant order (not just ask someone a question). */
+function isOrderPlacementRequest(request = '') {
+  const text = String(request);
+  return /\b(pickup|pick[\s-]*up|takeout|take[\s-]*out|to[\s-]*go|delivery)\b/i.test(text)
+    || /\b(place|make|put)\s+(an?\s+)?(order|pickup)\b/i.test(text)
+    || /\border\s+(from|at|food)\b/i.test(text)
+    || /\b(food|restaurant|eatery)\b.*\border\b/i.test(text)
+    || /\border\b.*\b(food|restaurant|eatery|pickup)\b/i.test(text);
+}
+
+const FOOD_ITEM_HINT =
+  /\b(idli|idly|dosa|biryani|pizza|burger|taco|naan|curry|thali|combo|plate|slice|wings|sandwich|bowl|rice|chicken|paneer|samosa|chai|coke|sprite|lassi|tikka|kebab|noodles|fried\s*rice|manchurian|soup|salad|fries|pasta|wrap|roll|paratha|chutney|raita|appetizer|entree|entrée|dessert)\b/i;
+
+function requestAlreadyListsOrderItems(request = '') {
+  const text = String(request);
+  if (FOOD_ITEM_HINT.test(text)) return true;
+  // e.g. "2 pepperoni" / "3x dosa" (not times/distances)
+  if (/\b\d+\s*[x×]\s*[a-z]/i.test(text)) return true;
+  if (/\b\d+\s+(plates?|pcs?|pieces?|orders?|slices?)\b/i.test(text)) return true;
+  return false;
+}
+
+function answersCoverOrderItems(answers = []) {
+  return (answers || []).some((a) => {
+    const q = String(a.question || '');
+    const ans = String(a.answer || '').trim();
+    if (!ans) return false;
+    if (/item|order|food|dish|menu|want|pickup/i.test(q)) return true;
+    if (FOOD_ITEM_HINT.test(ans) || ans.length >= 3) return true;
+    return false;
+  });
+}
+
+/**
+ * Pickup/order calls MUST know what to order before dialing.
+ * "call Hastag India and make a pickup order" with no items → ask first.
+ */
+function needsOrderItemsBeforeCall(request = '', answers = []) {
+  if (!isOrderPlacementRequest(request)) return false;
+  if (requestAlreadyListsOrderItems(request)) return false;
+  if (answersCoverOrderItems(answers)) return false;
+  return true;
+}
+
+function orderItemsQuestions() {
+  return [
+    {
+      id: 'order_items',
+      question: 'What items would you like to order for pickup?',
+      why: 'We need the food items and quantities before calling the restaurant.',
+      suggestions: [],
+    },
+    {
+      id: 'order_notes',
+      question: 'Any special requests? (spice level, no onion, utensils, etc.)',
+      why: 'Optional details for the restaurant — skip if none.',
+      suggestions: ['No special requests'],
+    },
+  ];
+}
+
 /**
  * Calling a known person to ask/tell them something is already complete —
  * those questions belong ON the call, not in a form for the user.
+ * Does NOT apply to restaurant pickup/order placement.
  */
 function canPlaceDirectCall({ request, contacts = [] }) {
+  if (isOrderPlacementRequest(request)) return false;
   const phones = extractExplicitPhones(request);
   const matched = matchContactsInRequest(request, contacts);
   if (!phones.length && !matched.length) return false;
@@ -166,6 +229,16 @@ async function clarifyRequest({ request, profile, contacts = [], attachments = [
       questions: [],
       finalBrief: buildFallbackBrief(request, answers),
       summaryBullets: [`Call ${who} and handle this on the phone.`],
+    };
+  }
+
+  // Hard rule: never dial a pickup/order without knowing the items.
+  if (needsOrderItemsBeforeCall(request, answers)) {
+    return {
+      ready: false,
+      questions: orderItemsQuestions(),
+      finalBrief: '',
+      summaryBullets: [],
     };
   }
 
@@ -196,7 +269,7 @@ async function clarifyRequest({ request, profile, contacts = [], attachments = [
       {
         role: 'system',
         content:
-          'You decide if a personal concierge can PLACE a phone call now. Ask the user only for details we must know BEFORE dialing. Never ask the user for facts the other person on the call is supposed to provide.',
+          'You decide if a personal concierge can PLACE a phone call now. Ask the user only for details we must know BEFORE dialing. Never ask the user for facts the other person on the call is supposed to provide. For restaurant pickup/orders, NEVER set ready:true unless specific food items (and quantities) are already known.',
       },
       {
         role: 'user',
@@ -213,10 +286,16 @@ ${attachmentBlock ? `Uploaded file details:\n${attachmentBlock}\n` : ''}
 Follow-up Q&A so far:
 ${answerBlock}
 
-Decide if we have enough to PLACE the call(s). Default to ready:true.
+Decide if we have enough to PLACE the call(s).
+
+HARD RULE — pickup / food order:
+- If the user wants a pickup, takeout, or restaurant order and has NOT named specific items, ready:false.
+- Ask what to order (items + quantities). Optional: special requests.
+- Example that is NOT ready: "call Hastag India near me and make a pickup order"
+- Example that IS ready: "pickup 2 idly and 1 masala dosa from Hastag India"
 
 Ask the USER only if WE cannot dial without it:
-- "order food from X" and no items named → which items
+- "order food from X" / "make a pickup order" and no items → which items (required)
 - "book an appointment" and no service/time → service, day/time window
 - "shop car lease" with no budget/model → vehicle type, budget
 - "make a reservation" with no party/date → party size, date, time
@@ -227,7 +306,7 @@ NEVER ask the user:
 - How the assistant should greet, what name to use, or call-script wording — put that in the brief
 - Details already in the request, profile, or contacts
 
-If the job is "call [person] and ask them …" and we know who (contact or phone), ready:true immediately.
+If the job is "call [person] and ask them …" and we know who (contact or phone), and it is NOT a restaurant order, ready:true immediately.
 
 Return ONLY JSON:
 {
@@ -241,15 +320,21 @@ Return ONLY JSON:
 
 Rules:
 - Ask at most 3 questions, only if they block dialing.
-- Prefer ready:true.
+- Prefer ready:true ONLY when dialing is not blocked.
 - suggestions are optional; use [] when free text is needed.`,
       },
     ],
   });
 
   const parsed = JSON.parse(completion.choices[0]?.message?.content || '{}');
-  const questions = Array.isArray(parsed.questions) ? parsed.questions.slice(0, 4) : [];
-  const ready = Boolean(parsed.ready) || questions.length === 0;
+  let questions = Array.isArray(parsed.questions) ? parsed.questions.slice(0, 4) : [];
+  let ready = Boolean(parsed.ready) || questions.length === 0;
+
+  // Safety net if the model tries to skip order details.
+  if (ready && needsOrderItemsBeforeCall(request, answers)) {
+    ready = false;
+    questions = orderItemsQuestions();
+  }
 
   return {
     ready,
@@ -552,6 +637,8 @@ module.exports = {
   planMission,
   clarifyRequest,
   canPlaceDirectCall,
+  needsOrderItemsBeforeCall,
+  isOrderPlacementRequest,
   discoverBusinesses,
   isGenericTargetName,
   findBusinessWithOpenAI,
