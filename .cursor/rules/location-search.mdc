@@ -25,5 +25,6 @@ When changing OpenAI / Places / mission planning code:
 
 # Human greeting on outbound calls
 
-- First utterance is only "Hi". Wait. If no reply: "Can you hear me?" Then the real purpose.
-- Do not put the order/message in `firstMessage`. See AGENTS.md "Human greeting protocol".
+- We say Hi first. ~5s silence (Vapi min) → "Can you hear me?" Once they speak, reply immediately (no dead air).
+- Do not volunteer "this is {name}" unless asked. Do not put the order/message in `firstMessage`.
+- See AGENTS.md "Human greeting protocol".

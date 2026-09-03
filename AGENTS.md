@@ -49,13 +49,18 @@ Contact-message calls ("call Mom and say I'll be late") stay ready without a for
 
 ### Human greeting protocol — all outbound calls
 
-Do **not** dump the mission in the first sentence. Start like a real person picking up a live line.
+Sound like a real person on a live line. Goal: they never think it is spam or a bot because we dump a script or sit in dead silence.
 
-1. **First words: only "Hi"** (or "Hello") — then **wait** for them to answer.
-2. **If they don't reply** (silence / unclear pickup): "Can you hear me?" or "Hello — can you hear me?" Then wait again.
-3. **After they respond** (hello / yes / who is this): introduce yourself briefly, then the purpose of the call.
-4. **Never** open with the full order, message, or "Hi this is X I need pickup 2 idly…"
-5. Encode this in `buildMissionCallPrompt` and `firstMessage` (`backend/src/services/vapi.js`). `firstMessage` must stay a short greeting only.
+1. **We speak first:** first words are only **"Hi"** (or "Hello"). Then pause.
+2. **If no reply after a short pause:** say **"Can you hear me?"** (once). Then continue as a normal conversation — do not sit silent again. Vapi's idle timeout cannot be under **5 seconds** (`idleTimeoutSeconds` ≥ 5).
+3. **The moment they say anything** (hello, yes, who is this, hmm, background talk): answer **immediately**. Do not wait for another turn. That silence after they pick up is what makes it feel like spam/AI.
+4. **Do not volunteer a name.** Never open with "This is Venkat" / "Hi this is {{name}}". Say who you are **only if they ask**.
+5. After the greeting is acknowledged, get into the reason for calling naturally (order, message, question) — not a canned dump in the first breath, but also not a freeze.
+6. Encode in `backend/src/services/vapi.js`: `firstMessage` stays `"Hi."`; idle nudge is `"Can you hear me?"` with `idleTimeoutSeconds: 5` (Vapi minimum); prompts must continue as soon as they speak.
+
+**Wrong:** Hi → they say hello → we wait.  
+**Wrong:** Hi this is Venkat, I need 2 idly pickup…  
+**Right:** Hi → (~5s silence) Can you hear me? → they talk → we talk back right away, like a person.
 
 ### Stay on the line — never hang up mid-confusion
 

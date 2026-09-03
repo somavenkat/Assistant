@@ -15,12 +15,13 @@ function headers() {
   };
 }
 
-const HUMAN_GREETING_PROTOCOL = `HOW TO START THE CALL (mandatory — like a real human):
-1. Your first spoken line is ONLY "Hi" (or "Hello"). Then STOP and wait for them.
-2. Do NOT immediately say your name, the order, or the message.
-3. If they stay silent or the pickup is unclear: say "Can you hear me?" (or "Hello — can you hear me?") and wait again.
-4. After they greet you, say yes, or ask who it is: THEN introduce yourself naturally and get to the purpose.
-5. Never dump the full request in the first breath.`;
+const HUMAN_GREETING_PROTOCOL = `HOW TO SOUND LIKE A REAL HUMAN (mandatory):
+1. Opening is already "Hi". Do not add your name or the mission on top of it.
+2. If they are silent for a few seconds, you may say "Can you hear me?" once. Then keep going — do not freeze.
+3. The INSTANT they speak (hello, yes, who is this, anything): you MUST reply right away. Dead air after they answer makes this sound like spam / AI. Never wait for a second prompt from them.
+4. Do NOT say "this is [your name]" or volunteer your name unless they ASK who you are.
+5. After they have responded, go naturally into why you called (the message / order). Conversational, not a script dump.
+6. Never sit silent after they have already talked.`;
 
 function buildMissionCallPrompt({ profile, plan, target, attachments = [] }) {
   const { formatAttachmentsForPrompt } = require('./attachments');
@@ -43,7 +44,7 @@ ${plan.spokenBrief}
 Requirements:
 ${(plan.requirements || []).map((r) => `- ${r}`).join('\n') || '- Deliver the message naturally'}
 
-If they ask who you are: you are ${profile.name}${profile.phone ? `, callback ${profile.phone}` : ''}.
+Only if they ask who you are: you are ${profile.name}${profile.phone ? `, callback ${profile.phone}` : ''}. Do not offer your name unprompted.
 Keep the call short. After delivering the message and any brief back-and-forth, wrap up politely.
 If you don't understand them (noise, accent, unclear reply): ask them to repeat or clarify — NEVER hang up mid-conversation just because you were confused.
 Never invent a different purpose for the call. Never mention Vapi, Twilio, OpenAI, or automation.`;
@@ -64,7 +65,7 @@ ${(plan.requirements || []).map((r) => `- ${r}`).join('\n') || '- (see spoken br
 You are calling: ${target.name}
 Their address (if known): ${target.address || 'unknown'}
 
-Your identity if they ask:
+If they ask who you are (do not volunteer this):
 - Name: ${profile.name}
 - Callback phone: ${profile.phone}
 - Area: ${profile.area || 'nearby'}
@@ -89,8 +90,8 @@ CRITICAL — do not disconnect early:
 - Only end the call after the goal is done, they clearly cannot help / decline, or they say goodbye.
 
 Call flow:
-1. Open with Hi only; wait; if no reply, "Can you hear me?"
-2. After they respond, greet as ${profile.name} and clearly explain what you need.
+1. Hi first. If a few seconds of silence, "Can you hear me?"
+2. The moment they speak, continue immediately with why you called — do not wait, do not say your name unless asked.
 3. Answer their questions using the requirements and uploaded file details. If something is unknown, say you'll confirm and keep moving.
 4. Capture concrete outcomes: price/quote, availability, confirmation number, ready time, next steps.
 5. If they cannot help, ask who can, or thank them and end politely.
@@ -187,11 +188,21 @@ async function placeMissionCall({ profile, plan, target, attachments = [] }) {
     },
     assistantOverrides: {
       firstMessage,
+      firstMessageMode: 'assistant-speaks-first',
       voice: {
         provider: 'vapi',
         voiceId: config.vapi.voiceId || 'Sagar',
         version: '2',
         language: 'auto',
+      },
+      messagePlan: {
+        // Vapi rejects anything under 5 seconds.
+        idleTimeoutSeconds: 5,
+        idleMessages: ['Can you hear me?'],
+        idleMessageMaxSpokenCount: 1,
+      },
+      startSpeakingPlan: {
+        waitSeconds: 0.4,
       },
       variableValues: {
         customerName: profile.name,
