@@ -88,23 +88,34 @@ function isGenericTargetName(name = '') {
 /**
  * Web-search for REAL, named businesses (with phone numbers) matching a category query.
  * Used when the user asks to shop around rather than naming a specific business.
+ * MUST be near the user's profile location.
  */
-async function discoverBusinesses({ query, locationHint, count = 3 }) {
-  const where = locationHint ? ` in or near ${locationHint}` : '';
+async function discoverBusinesses({ query, locationHint, latitude, longitude, count = 3 }) {
+  const { buildLocationContext } = require('./location');
+  const location = buildLocationContext({
+    area: locationHint || '',
+    latitude,
+    longitude,
+  });
+  const where = location.nearPhrase || (locationHint ? ` near ${locationHint}` : '');
   try {
     const response = await client.responses.create({
       model: 'gpt-4o-mini',
       tools: [{ type: 'web_search_preview' }],
-      input: `Find ${count} real, currently-operating businesses matching: "${query}"${where}.
+      input: `Find ${count} real, currently-operating businesses matching: "${query}"${where ? ` ${where}` : ''}.
+
+${location.searchRules}
+
 These must be actual named businesses with working public phone numbers a customer can call.
 
 Return ONLY JSON:
-{"businesses":[{"name":"","phone":"E.164 like +15125551234","address":"","website":"","confidence":"high|medium|low"}]}
+{"businesses":[{"name":"","phone":"E.164 like +15125551234","address":"full street address with city/state","website":"","confidence":"high|medium|low","approxMilesFromUser":0}]}
 
 Rules:
 - Real business names only. Never return placeholders like "Local Dealership" or "Nearby Agency".
-- Only include entries where you found an actual phone number.
-- Prefer the main sales/customer line.`,
+- Only include entries where you found an actual phone number AND a nearby address.
+- Prefer the main sales/customer line.
+- Sort nearest-first. Drop anything that looks hours away from the user.`,
     });
 
     const text = response.output_text || '';
@@ -112,7 +123,11 @@ Rules:
     if (!match) return [];
     const parsed = JSON.parse(match[0]);
     const list = Array.isArray(parsed.businesses) ? parsed.businesses : [];
-    return list.filter((b) => b?.name && b?.phone).slice(0, count);
+    const { looksFarFromUser } = require('./location');
+    return list
+      .filter((b) => b?.name && b?.phone)
+      .filter((b) => !looksFarFromUser(b.address, location))
+      .slice(0, count);
   } catch (err) {
     console.warn('[openai] business discovery failed:', err.message);
     return [];
@@ -275,7 +290,9 @@ User profile:
 - Name: ${profile.name}
 - Phone: ${profile.phone}
 - Area: ${profile.area || 'unknown'}
+- Coordinates: ${profile.latitude != null && profile.longitude != null ? `${profile.latitude}, ${profile.longitude}` : 'unknown'}
 
+IMPORTANT: Any business/restaurant you plan to call MUST be near this user location. Put the area into each target's searchQuery (e.g. "Chowrastha near Liberty Hill, Texas"). Never plan a call to a distant city branch when a local one exists.
 Saved contacts (use these when the user names a person):
 ${contactsBlock}
 
@@ -406,10 +423,20 @@ CRITICAL RULES:
 
 /**
  * Find a business phone/address via OpenAI web search.
+ * Location bias is mandatory when the user has an area / coordinates.
  */
-async function findBusinessWithOpenAI({ name, searchQuery, locationHint }) {
-  const query = `Find the official customer-facing phone number and address for "${name}".
-Search context: ${searchQuery || name}${locationHint ? ` near ${locationHint}` : ''}.
+async function findBusinessWithOpenAI({ name, searchQuery, location, locationHint, strictNearbyOnly = false }) {
+  const { buildLocationContext } = require('./location');
+  const loc =
+    location && typeof location === 'object' && 'searchRules' in location
+      ? location
+      : buildLocationContext({ area: locationHint || location?.area || '', latitude: location?.latitude, longitude: location?.longitude });
+
+  const near = loc.nearPhrase || (loc.area ? `near ${loc.area}` : '');
+  const query = strictNearbyOnly
+    ? `Find the CLOSEST "${name}" location to the user ${near}. Reject any branch that is hours away.`
+    : `Find the official customer-facing phone number and address for "${name}" ${near}.
+Search context: ${searchQuery || name} ${near}.
 Prefer a sales/quoting/ordering line that a real person can call.`;
 
   try {
@@ -418,13 +445,16 @@ Prefer a sales/quoting/ordering line that a real person can call.`;
       tools: [{ type: 'web_search_preview' }],
       input: `${query}
 
+${loc.searchRules}
+
 Return ONLY JSON with:
 - name
 - phone (E.164 if possible, else as listed)
-- address
+- address (full street + city + state — required)
 - website
 - confidence ("high"|"medium"|"low")
-- notes`,
+- notes (mention approx distance from user if known)
+- approxMilesFromUser (number or null)`,
     });
 
     const text = response.output_text || '';
@@ -438,11 +468,12 @@ Return ONLY JSON with:
 }
 
 /** @deprecated alias */
-async function findRestaurantWithOpenAI({ restaurantName, locationHint }) {
+async function findRestaurantWithOpenAI({ restaurantName, locationHint, latitude, longitude }) {
   return findBusinessWithOpenAI({
     name: restaurantName,
     searchQuery: restaurantName,
     locationHint,
+    location: { area: locationHint, latitude, longitude },
   });
 }
 

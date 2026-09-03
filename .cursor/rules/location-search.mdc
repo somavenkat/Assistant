@@ -1,0 +1,13 @@
+---
+description: Always bias business/restaurant search to the user's profile location
+alwaysApply: true
+---
+
+# Location-first business search
+
+When changing OpenAI / Places / mission planning code:
+
+- NEVER look up a restaurant or business by brand name alone.
+- ALWAYS pass `profile.area`, `profile.latitude`, and `profile.longitude` into search.
+- Prefer the nearest location within ~20–25 miles; reject hours-away franchise hits (e.g. Prosper when user is in Liberty Hill).
+- See root `AGENTS.md` and `backend/src/services/location.js`.

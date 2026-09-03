@@ -1,0 +1,41 @@
+# AGENTS.md — AI Personal Assistant
+
+Rules for anyone (human or AI) changing this codebase.
+
+## Location is non-negotiable for business search
+
+When the user asks to call / order from a **named restaurant or business**, lookups MUST use their **Settings profile location** (`profile.area` + `profile.latitude` / `profile.longitude`).
+
+### Required behavior
+
+1. **Always bias search to the user.** Pass `locationHint`, `latitude`, and `longitude` into `lookupBusiness`, `discoverBusinesses`, and `findBusinessWithOpenAI`.
+2. **Nearest branch wins.** Chains (e.g. Chowrastha) often have many cities. Never pick a flagship/first Google hit hours away when a closer location exists.
+3. **Reject far matches.** If a result is clearly in another metro (e.g. Prosper/Dallas when the user is in Liberty Hill / Cedar Park / Austin area), do **not** dial it. Retry with a stricter nearby query or fail with a clear error asking the user to clarify.
+4. **Put location in the query string** — e.g. `"Chowrastha near Liberty Hill, Texas"` or include coordinates — not just the brand name alone.
+5. **Google Places:** when a key exists, use `locationBias` circle (~40km) around the user coordinates.
+6. **OpenAI web search prompts** must include the CRITICAL LOCATION RULES from `backend/src/services/location.js`.
+
+### Bad example (real bug)
+
+- User in Liberty Hill, TX: *"Call Chowrastha restaurant and make pickup order"*
+- App returned Chowrastha in **Prosper, TX** (~4 hours away) via `openai_discovery` / web search.
+- That is a product failure. Local / nearest only.
+
+### Good example
+
+- Same request → search `"Chowrastha near Liberty Hill, Texas"` (with lat/lng) → return the closest Central Texas location, or say none found nearby.
+
+## Clarification vs call script
+
+- Do **not** ask the user for facts the **callee** should answer on the phone ("what did Sai eat?").
+- Ask the user only for details that **block dialing** (who to call if unknown, order items for a pickup we are placing, etc.).
+
+## Voice / telephony
+
+- Outbound voice uses Vapi + Twilio. Default Vapi voice: **Sagar** (`VAPI_VOICE_ID=Sagar`).
+- Twilio Trial can only call verified numbers — surface that clearly; do not 502.
+
+## Deploy
+
+- Production: Vercel at `assistant-six-omega.vercel.app`
+- Push to `main` auto-deploys. Never commit `.env`.

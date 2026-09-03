@@ -315,8 +315,10 @@ async function resolveTargets(plan, profile) {
 
     const found = await lookupBusiness({
       name: target.name,
-      searchQuery: target.searchQuery || target.name,
+      searchQuery: target.searchQuery || `${target.name} near ${profile.area || ''}`.trim(),
       locationHint: profile.area,
+      latitude: profile.latitude,
+      longitude: profile.longitude,
     });
     resolved.push(
       buildTarget({
@@ -329,6 +331,7 @@ async function resolveTargets(plan, profile) {
         website: found?.website,
         source: found?.source,
         confidence: found?.confidence,
+        error: found?.error || found?.notes || null,
       })
     );
   }
@@ -339,6 +342,8 @@ async function resolveTargets(plan, profile) {
     const discovered = await discoverBusinesses({
       query: plan.discoveryQuery,
       locationHint: profile.area,
+      latitude: profile.latitude,
+      longitude: profile.longitude,
       count: stillNeeded,
     });
 
