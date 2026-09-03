@@ -43,3 +43,18 @@ npm run dev:web
 ## Security note
 
 Rotate any keys that were shared outside `.env`.
+
+## Deploy (Vercel)
+
+Production: https://assistant-six-omega.vercel.app
+
+The GitHub repo is connected to Vercel. Pushes to `main` auto-deploy production.
+
+Local setup for Vercel CLI (optional):
+
+```bash
+npx vercel login
+npx vercel --prod
+```
+
+Secrets live in the Vercel project Environment Variables (not in git).

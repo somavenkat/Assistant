@@ -3,6 +3,7 @@ dist/
 build/
 .env
 .env.local
+.env*.local
 .DS_Store
 *.log
 .ionic/
@@ -10,3 +11,4 @@ www/
 coverage/
 .vite/
 backend/data/
+.vercel

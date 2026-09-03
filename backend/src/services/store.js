@@ -1,7 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = path.resolve(__dirname, '../../data');
+// On Vercel the deployment FS is read-only except /tmp
+const DATA_DIR = process.env.VERCEL
+  ? path.join('/tmp', 'ai-personal-assistant')
+  : path.resolve(__dirname, '../../data');
 const STORE_PATH = path.join(DATA_DIR, 'missions.json');
 
 function ensureStore() {
