@@ -6,7 +6,6 @@ import {
   IonContent,
   IonHeader,
   IonIcon,
-  IonInput,
   IonPage,
   IonSpinner,
   IonTextarea,
@@ -278,7 +277,7 @@ export default function Home() {
             <div className="meta-block highlight">
               <h3>A few quick questions</h3>
               <p className="lede" style={{ marginBottom: '0.75rem' }}>
-                Optional — only if it helps us dial. Anything you want Sai (or whoever) to answer will be asked on the call.
+                Type your answers below so we can place the call correctly. Skip anything you want asked on the phone instead.
               </p>
               {questions.map((q) => (
                 <div key={q.id} className="clarify-block">
@@ -286,11 +285,18 @@ export default function Home() {
                     <strong>{q.question}</strong>
                   </p>
                   {q.why && <p className="clarify-why">{q.why}</p>}
-                  <IonInput
-                    value={answers[q.id] || ''}
-                    placeholder="Your answer (optional)"
-                    onIonInput={(e) => setAnswers((prev) => ({ ...prev, [q.id]: String(e.detail.value || '') }))}
-                  />
+                  <div className="clarify-input-wrap">
+                    <IonTextarea
+                      className="clarify-input"
+                      autoGrow
+                      rows={2}
+                      value={answers[q.id] || ''}
+                      placeholder="Tap here and type your answer…"
+                      onIonInput={(e) =>
+                        setAnswers((prev) => ({ ...prev, [q.id]: String(e.detail.value || '') }))
+                      }
+                    />
+                  </div>
                   {q.suggestions && q.suggestions.length > 0 && (
                     <div className="suggestion-row">
                       {q.suggestions.map((s) => (
