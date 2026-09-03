@@ -11,7 +11,7 @@ import {
   IonToolbar,
   IonBackButton,
 } from '@ionic/react';
-import { executeMission, getMission, type MissionRecord } from '../api';
+import { executeMission, getMission, retryMission, type MissionRecord } from '../api';
 import CallTranscript from '../components/CallTranscript';
 
 export default function MissionStatus() {
@@ -21,24 +21,34 @@ export default function MissionStatus() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [executing, setExecuting] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   const isPreview = mission?.status === 'preview';
   const failed = mission?.status === 'failed';
   const done =
     mission?.status === 'completed' ||
     mission?.status === 'completed_with_errors';
+  const liveCallInProgress = (mission?.targets || []).some(
+    (t) =>
+      t.callId &&
+      !['ended', 'completed', 'failed', 'busy', 'no-answer'].includes(String(t.status))
+  );
+  const dialingNow = (mission?.targets || []).some((t) => t.status === 'dialing');
   const pending =
     mission &&
     !isPreview &&
-    (mission.status === 'starting' ||
-      mission.status === 'calling' ||
-      mission.status === 'in_progress' ||
+    (liveCallInProgress ||
+      dialingNow ||
+      mission.status === 'planning' ||
+      (mission.status === 'in_progress' && liveCallInProgress) ||
       (done &&
         mission.targets.some(
           (t) =>
             t.callId &&
             !['ended', 'completed', 'failed', 'busy', 'no-answer'].includes(t.status)
         )));
+  const showRetry =
+    Boolean(mission?.canRetry) && !isPreview && !liveCallInProgress && !dialingNow && !executing;
 
   async function refresh() {
     if (!id) return;
@@ -59,10 +69,17 @@ export default function MissionStatus() {
 
   useEffect(() => {
     if (!mission || isPreview) return;
-    if (!pending && done) return;
+    const shouldPoll =
+      pending ||
+      retrying ||
+      mission.status === 'starting' ||
+      mission.status === 'calling' ||
+      liveCallInProgress ||
+      dialingNow;
+    if (!shouldPoll) return;
     const timer = setInterval(refresh, 4000);
     return () => clearInterval(timer);
-  }, [id, mission?.status, pending, done, isPreview]);
+  }, [id, mission?.status, pending, retrying, liveCallInProgress, dialingNow, isPreview]);
 
   async function startCalls() {
     if (!id) return;
@@ -75,6 +92,20 @@ export default function MissionStatus() {
       setError(e.message || 'Could not start calls');
     } finally {
       setExecuting(false);
+    }
+  }
+
+  async function retryCalls() {
+    if (!id) return;
+    setRetrying(true);
+    setError('');
+    try {
+      const data = await retryMission(id);
+      setMission(data);
+    } catch (e: any) {
+      setError(e.message || 'Could not retry call');
+    } finally {
+      setRetrying(false);
     }
   }
 
@@ -102,7 +133,7 @@ export default function MissionStatus() {
         </IonToolbar>
       </IonHeader>
       <IonContent fullscreen>
-        <div className="page-wrap">
+        <div className="page-wrap mission-page">
           {loading && <IonSpinner name="crescent" />}
           {error && <p className="error-text">{error}</p>}
 
@@ -264,9 +295,9 @@ export default function MissionStatus() {
                 </div>
               )}
 
-              {pending && (
+              {(pending || retrying || dialingNow) && (
                 <p className="lede" style={{ marginTop: '1rem' }}>
-                  {mission.status === 'starting'
+                  {retrying || mission.status === 'starting' || dialingNow
                     ? 'Starting calls…'
                     : 'Waiting for call to finish…'}{' '}
                   this page refreshes automatically.
@@ -288,7 +319,14 @@ export default function MissionStatus() {
                     <IonButton fill="outline" onClick={refresh}>
                       Refresh
                     </IonButton>
-                    <IonButton onClick={() => navigate('/home')}>New request</IonButton>
+                    {showRetry && (
+                      <IonButton disabled={retrying} onClick={retryCalls}>
+                        {retrying ? <IonSpinner name="crescent" /> : 'Retry call'}
+                      </IonButton>
+                    )}
+                    <IonButton fill={showRetry ? 'outline' : 'solid'} onClick={() => navigate('/home')}>
+                      New request
+                    </IonButton>
                   </>
                 )}
               </div>

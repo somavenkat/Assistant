@@ -29,12 +29,18 @@ body {
 
 ion-content {
   --background: transparent;
+  --padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
 }
 
 .page-wrap {
   max-width: 720px;
   margin: 0 auto;
-  padding: 1.25rem 1rem 3rem;
+  padding: 1.25rem 1rem calc(2.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+.page-wrap.mission-page {
+  /* Clear sticky actions + mobile browser URL/tool bar */
+  padding-bottom: calc(9rem + env(safe-area-inset-bottom, 0px));
 }
 
 .brand {
@@ -65,7 +71,38 @@ ion-content {
   display: flex;
   gap: 0.75rem;
   flex-wrap: wrap;
-  margin: 1rem 0 0.5rem;
+  align-items: center;
+  margin: 1.25rem 0 0;
+  padding: 0.5rem 0 calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+.page-wrap.mission-page .actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 8;
+  /* Safe area + mobile Safari/Chrome bottom toolbar */
+  padding: 0.85rem 0 calc(1.25rem + env(safe-area-inset-bottom, 0px) + 4.5rem);
+  background: linear-gradient(
+    180deg,
+    rgba(247, 243, 234, 0) 0%,
+    rgba(247, 243, 234, 0.95) 22%,
+    var(--bg-bottom) 48%
+  );
+}
+
+.page-wrap.mission-page .actions ion-button {
+  margin: 0;
+  min-height: 2.75rem;
+}
+
+@media (max-width: 540px) {
+  .page-wrap.mission-page {
+    padding-bottom: calc(11rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .page-wrap.mission-page .actions {
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px) + 5.25rem);
+  }
 }
 
 .status-pill {

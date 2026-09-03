@@ -14,6 +14,7 @@ export type MissionTarget = {
   endedReason?: string;
   error?: unknown;
   outcome?: string;
+  canRetry?: boolean;
   source?: string;
   confidence?: string;
 };
@@ -70,6 +71,7 @@ export type MissionRecord = {
     unresolved?: string[];
   } | null;
   error?: unknown;
+  canRetry?: boolean;
 };
 
 export type ClarifyQuestion = {
@@ -197,5 +199,16 @@ export async function refreshMission(id: string): Promise<MissionRecord> {
   const res = await fetch(`${API_BASE}/missions/${id}/refresh`, { method: 'POST' });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Refresh failed');
+  return data;
+}
+
+export async function retryMission(id: string, targetIds?: string[]): Promise<MissionRecord> {
+  const res = await fetch(`${API_BASE}/missions/${id}/retry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(targetIds?.length ? { targetIds } : {}),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not retry call');
   return data;
 }

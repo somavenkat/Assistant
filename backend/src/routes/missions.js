@@ -30,7 +30,6 @@ function maybeUpload(req, res, next) {
 }
 
 const TERMINAL_STATUSES = new Set(['ended', 'completed', 'failed', 'busy', 'no-answer']);
-const ACTIVE_MISSION_STATUSES = new Set(['starting', 'planning', 'calling', 'in_progress']);
 
 function isTargetPending(target) {
   if (!target.phone || target.status === 'lookup_failed') return false;
@@ -39,7 +38,15 @@ function isTargetPending(target) {
 }
 
 function isMissionPending(mission) {
-  if (ACTIVE_MISSION_STATUSES.has(mission.status)) return true;
+  const hasLiveOrDialing = (mission.targets || []).some(
+    (t) =>
+      t.status === 'dialing' ||
+      (t.callId && !TERMINAL_STATUSES.has(String(t.status)))
+  );
+  if (mission.status === 'planning') return true;
+  if (mission.status === 'starting' || mission.status === 'calling' || mission.status === 'in_progress') {
+    return hasLiveOrDialing;
+  }
   if (mission.status === 'completed' || mission.status === 'completed_with_errors') {
     return mission.targets.some(isTargetPending);
   }
@@ -54,6 +61,7 @@ function isUnreachableTarget(target) {
   if (reason.includes('customer-did-not-answer')) return true;
   if (reason.includes('customer-busy')) return true;
   if (reason.includes('voicemail') || reason.includes('machine')) return true;
+  if (reason.includes('silence-timed-out')) return true;
   if (status === 'ended' && !(target.transcript || '').trim()) return true;
   return false;
 }
@@ -120,7 +128,7 @@ function buildUnreachableRecommendation(mission) {
       details: summary,
       nextStep: allTransport
         ? 'Upgrade Twilio or verify the destination number, then try again.'
-        : 'Try calling again later, or send a text if urgent.',
+        : 'Tap Retry call to ring again with the same message, or try later.',
     },
     alternatives: [],
     unresolved: outcomes.map((o) => o.text),
@@ -160,9 +168,11 @@ function explainCallFailure(endedReason = '', targetPhone = '') {
 function publicMission(mission) {
   return {
     ...mission,
+    canRetry: (mission.targets || []).some(isRetryableTarget),
     targets: (mission.targets || []).map((t) => ({
       ...t,
       outcome: describeTargetOutcome(t),
+      canRetry: isRetryableTarget(t),
     })),
     attachments: (mission.attachments || []).map((a) => ({
       id: a.id,
@@ -371,15 +381,27 @@ async function resolveTargets(plan, profile) {
   return withPhones.length ? withPhones.slice(0, plan.maxTargets || 3) : resolved;
 }
 
-async function dialTargets(mission) {
+function isRetryableTarget(target) {
+  if (!target?.phone || target.status === 'lookup_failed') return false;
+  // Still mid-call — don't redial yet
+  if (target.callId && !TERMINAL_STATUSES.has(String(target.status))) return false;
+  if (isUnreachableTarget(target)) return true;
+  // Never dialed / stuck before connect
+  if (!target.callId) return true;
+  return false;
+}
+
+async function dialTargets(mission, { onlyTargetIds } = {}) {
   mission.status = 'calling';
   for (const target of mission.targets) {
+    if (onlyTargetIds && !onlyTargetIds.includes(target.id)) continue;
     if (!target.phone) {
       target.status = 'lookup_failed';
       continue;
     }
     try {
       target.status = 'dialing';
+      target.error = null;
       const call = await placeMissionCall({
         profile: mission.profile,
         plan: mission.plan,
@@ -395,8 +417,12 @@ async function dialTargets(mission) {
     }
   }
 
-  const anyQueued = mission.targets.some((t) => t.callId && !TERMINAL_STATUSES.has(t.status));
-  const anySuccessDial = mission.targets.some((t) => t.callId);
+  const scoped = onlyTargetIds
+    ? mission.targets.filter((t) => onlyTargetIds.includes(t.id))
+    : mission.targets;
+
+  const anyQueued = scoped.some((t) => t.callId && !TERMINAL_STATUSES.has(t.status));
+  const anySuccessDial = scoped.some((t) => t.callId);
   if (!anySuccessDial) {
     mission.status = 'failed';
     mission.error = 'No calls could be started';
@@ -726,6 +752,71 @@ router.post('/missions/:id/refresh', async (req, res) => {
   if (!mission) return res.status(404).json({ error: 'Mission not found' });
   await refreshMissionCalls(mission);
   return res.json(publicMission(mission));
+});
+
+/**
+ * Redial targets that didn't connect (no answer, busy, voicemail, failed, never started).
+ * Reuses the same mission plan / conversation brief.
+ */
+router.post('/missions/:id/retry', async (req, res) => {
+  try {
+    const mission = missions.get(req.params.id);
+    if (!mission) return res.status(404).json({ error: 'Mission not found' });
+    if (mission.status === 'preview') {
+      return res.status(400).json({ error: 'Preview missions cannot be retried. Use Start calls.' });
+    }
+
+    const requestedIds = Array.isArray(req.body?.targetIds) ? req.body.targetIds : null;
+    const retryable = mission.targets.filter((t) => {
+      if (requestedIds && !requestedIds.includes(t.id)) return false;
+      return isRetryableTarget(t);
+    });
+
+    if (!retryable.length) {
+      return res.status(400).json({
+        error: 'Nothing to retry — no unanswered, busy, voicemail, or failed calls.',
+      });
+    }
+
+    for (const target of retryable) {
+      if (!Array.isArray(target.previousAttempts)) target.previousAttempts = [];
+      if (target.callId || target.transcript || target.endedReason) {
+        target.previousAttempts.push({
+          callId: target.callId || null,
+          status: target.status,
+          endedReason: target.endedReason || '',
+          transcript: target.transcript || '',
+          at: new Date().toISOString(),
+        });
+      }
+      target.callId = null;
+      target.status = 'ready';
+      target.transcript = '';
+      target.endedReason = '';
+      target.error = null;
+      target.callCreatedAt = null;
+    }
+
+    mission.recommendation = null;
+    mission.error = null;
+    mission.status = 'starting';
+    mission.updatedAt = new Date().toISOString();
+    save(mission);
+
+    res.json(publicMission(mission));
+
+    dialTargets(mission, { onlyTargetIds: retryable.map((t) => t.id) }).catch((err) => {
+      console.error('[missions] retry dial failed', err);
+      mission.status = 'failed';
+      mission.error = err.message || 'Failed to retry calls';
+      mission.updatedAt = new Date().toISOString();
+      save(mission);
+    });
+    return;
+  } catch (err) {
+    console.error('[missions] retry failed', err);
+    return res.status(500).json({ error: err.message || 'Failed to retry mission' });
+  }
 });
 
 router.delete('/missions/:id', (req, res) => {
