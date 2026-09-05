@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   IonButton,
@@ -14,15 +14,38 @@ import {
   useIonViewWillEnter,
 } from '@ionic/react';
 import { attachOutline, closeCircleOutline, peopleOutline, settingsOutline, timeOutline } from 'ionicons/icons';
-import { clarifyRequest, createMission, type ClarifyAnswer, type ClarifyQuestion } from '../api';
+import { askChat, clarifyRequest, createMission, type ChatMessage, type ClarifyAnswer, type ClarifyQuestion } from '../api';
 import { loadContacts } from '../contacts';
 import { loadProfile, profileIsReady } from '../profile';
 
+const CHAT_KEY = 'assistant-chat-history';
+
 const EXAMPLES = [
+  'What\'s the current time in Hyderabad, India?',
   'Call Mom and say I\'ll be 20 minutes late for dinner.',
   'Place a pickup order at Joe\'s Pizza for 2 pepperoni slices and a coke.',
-  'Shop car lease options around $100–$150/month and tell me the best deal.',
 ];
+
+function looksLikePhoneMission(text: string) {
+  const t = text.trim();
+  if (!t) return false;
+  if (/\b(call|dial|phone|ring)\b/i.test(t)) return true;
+  if (/\+?\d[\d\s().-]{8,}\d/.test(t)) return true;
+  if (/\b(pickup|pick[\s-]*up|takeout|place\s+(an?\s+)?order)\b/i.test(t)) return true;
+  if (/\b(tell|ask|say|inform|text)\s+(?!me\b)(?!you\b)/i.test(t)) return true;
+  if (/\blet\s+\w+\s+know\b/i.test(t)) return true;
+  return false;
+}
+
+function loadChatHistory(): ChatMessage[] {
+  try {
+    const raw = localStorage.getItem(CHAT_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.slice(-40) : [];
+  } catch {
+    return [];
+  }
+}
 
 const ACCEPT =
   '.txt,.md,.csv,.json,.pdf,.png,.jpg,.jpeg,.webp,.gif,text/plain,text/csv,application/json,application/pdf,image/*';
@@ -43,6 +66,15 @@ export default function Home() {
   const [finalBrief, setFinalBrief] = useState('');
   const [summaryBullets, setSummaryBullets] = useState<string[]>([]);
   const [askedOnce, setAskedOnce] = useState(false);
+  const [chat, setChat] = useState<ChatMessage[]>(() => loadChatHistory());
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAT_KEY, JSON.stringify(chat.slice(-40)));
+    } catch {
+      /* ignore quota */
+    }
+  }, [chat]);
 
   useIonViewWillEnter(() => {
     const profile = loadProfile();
@@ -123,6 +155,11 @@ export default function Home() {
 
     setBusy(true);
     try {
+      if (!skipQuestions && !looksLikePhoneMission(request)) {
+        await sendChat(request.trim(), profile);
+        return;
+      }
+
       const clarifications = allAnswers();
 
       // Explicit skip only — do not auto-dial just because questions were already shown.
@@ -138,6 +175,11 @@ export default function Home() {
         answers: clarifications,
         files,
       });
+
+      if (clarification.informational) {
+        await sendChat(request.trim(), profile);
+        return;
+      }
 
       if (!clarification.ready && clarification.questions.length > 0) {
         setPriorAnswers(clarifications);
@@ -176,6 +218,22 @@ export default function Home() {
     }
   }
 
+  async function sendChat(text: string, profile = loadProfile()) {
+    const history = chat.slice(-20);
+    setChat((prev) => [...prev, { role: 'user', content: text }]);
+    setRequest('');
+    resetClarification();
+    try {
+      const result = await askChat(text, history, profile);
+      setChat((prev) => [...prev, { role: 'assistant', content: result.answer }]);
+    } catch (e: any) {
+      setChat((prev) => [
+        ...prev,
+        { role: 'assistant', content: e.message || 'I could not answer that just now.' },
+      ]);
+    }
+  }
+
   function setSuggestion(id: string, value: string) {
     setAnswers((prev) => ({ ...prev, [id]: value }));
   }
@@ -203,9 +261,26 @@ export default function Home() {
           <h1 className="brand">What do you need?</h1>
           <p className="lede">
             {ready
-              ? `Hi ${profileName || 'there'} — describe it in plain English. I'll ask follow-up questions if anything is missing before placing calls.`
-              : 'Set up your profile once (name, phone, area), then ask for pickups, insurance quotes, appointments, and more.'}
+              ? `Hi ${profileName || 'there'} — ask a question or tell me who to call. I'll remember this chat and only dial when you want a phone call.`
+              : 'Set up your profile once (name, phone, area), then ask questions or place calls.'}
           </p>
+
+          {chat.length > 0 && (
+            <div className="meta-block chat-thread">
+              <h3>Conversation</h3>
+              {chat.map((m, idx) => (
+                <div key={`${m.role}-${idx}`} className={`chat-turn ${m.role === 'user' ? 'chat-user' : 'chat-assistant'}`}>
+                  <span className="turn-label">{m.role === 'user' ? 'You' : 'Assistant'}</span>
+                  <div className="turn-bubble">{m.content}</div>
+                </div>
+              ))}
+              <div className="actions" style={{ marginTop: '0.5rem' }}>
+                <IonButton fill="clear" size="small" onClick={() => setChat([])}>
+                  Clear chat
+                </IonButton>
+              </div>
+            </div>
+          )}
 
           {!ready && (
             <div className="meta-block">
@@ -223,7 +298,7 @@ export default function Home() {
                 autoGrow
                 rows={6}
                 value={request}
-                placeholder="Example: Shop car lease options around $100–$150/month and tell me the best deal…"
+                placeholder="Ask anything, or say who to call — e.g. What’s the time in Hyderabad?"
                 onIonInput={(e) => {
                   setRequest(String(e.detail.value || ''));
                   resetClarification();
@@ -253,7 +328,15 @@ export default function Home() {
                 Preview plan
               </IonButton>
               <IonButton disabled={!ready || busy || !request.trim()} onClick={() => run(false)}>
-                {busy ? <IonSpinner name="crescent" /> : questions.length ? 'Call now' : 'Make the calls'}
+                {busy ? (
+                  <IonSpinner name="crescent" />
+                ) : questions.length ? (
+                  'Call now'
+                ) : looksLikePhoneMission(request) ? (
+                  'Make the calls'
+                ) : (
+                  'Ask'
+                )}
               </IonButton>
             </div>
 

@@ -55,12 +55,37 @@ Sound like a real person on a live line. Goal: they never think it is spam or a 
 2. **If no reply after a short pause:** say **"Can you hear me?"** (once). Then continue as a normal conversation — do not sit silent again. Vapi's idle timeout cannot be under **5 seconds** (`idleTimeoutSeconds` ≥ 5).
 3. **The moment they say anything** (hello, yes, who is this, hmm, background talk): answer **immediately**. Do not wait for another turn. That silence after they pick up is what makes it feel like spam/AI.
 4. **Do not volunteer a name.** Never open with "This is Venkat" / "Hi this is {{name}}". Say who you are **only if they ask**.
-5. After the greeting is acknowledged, get into the reason for calling naturally (order, message, question) — not a canned dump in the first breath, but also not a freeze.
+5. After the greeting is acknowledged, get into the reason for calling **one beat at a time** — not a canned dump of every question in the first breath, but also not a freeze.
 6. Encode in `backend/src/services/vapi.js`: `firstMessage` stays `"Hi."`; idle nudge is `"Can you hear me?"` with `idleTimeoutSeconds: 5` (Vapi minimum); prompts must continue as soon as they speak.
 
 **Wrong:** Hi → they say hello → we wait.  
 **Wrong:** Hi this is Venkat, I need 2 idly pickup…  
-**Right:** Hi → (~5s silence) Can you hear me? → they talk → we talk back right away, like a person.
+**Wrong (script dump):** "How are you? What are you doing? I'm Venkat's assistant. What's your plan? How's everything going?"  
+**Right:** Hi → (~5s silence) Can you hear me? → they talk → we talk back right away, like a person.  
+**Right (turn-by-turn):** "How are you?" → they answer → "What are you up to?" → … → intro only if requested → … → "What's the plan?"
+
+### One beat at a time — never monologue the brief
+
+`spokenBrief` / "What we'll say on the call" is a **conversation guide**, not a paragraph to read aloud.
+
+1. Plan it as a **numbered turn list** (ask A → wait → react → ask B).
+2. On the live call, say **one** short question or statement, then wait for their reply before the next topic.
+3. Never stack how-are-you + what-are-you-doing + intro + plans into a single turn.
+4. If the user asked you to introduce yourself / say you're their assistant, do that as **its own turn** after the greeting — not glued to every other question.
+5. Encode in mission planning (`openai.js` `spokenBrief` rules + `ensureTurnByTurnBrief`) and `HUMAN_CONVERSATION_RULES` in `vapi.js`.
+
+### Name + pronoun fidelity (never guess gender from a name)
+
+The user's words win. Relationship and pronouns in the request are **locks**, not hints.
+
+1. **"ANNA (my brother)" + he/him** → callee is **male**. Always **he/him/his**. Never **she/her**, even if the name often reads feminine.
+2. Spell the name **exactly** as given (Anna ≠ Ana). Do not "correct" or shorten it.
+3. If gender is not stated, use **they/them** — do **not** invent she/he from the first name.
+4. Gatekeeper / IVR: still use locked pronouns (*"Is Anna available?"* / *"Could you let him know…"*).
+5. Encode via `extractCalleeIdentity` / `applyCalleeIdentity` in `openai.js` and the **CALLEE IDENTITY** block in `buildMissionCallPrompt` (`vapi.js`).
+
+**Bad (real bug):** User: *call ANNA (my brother) … ask him…* → agent: *"catch up with Ana… when she's available?"*  
+**Good:** *"calling for Anna… when he's available?"*
 
 ### Stay on the line — never hang up mid-confusion
 
@@ -103,6 +128,18 @@ React like a person (*"Got it, rest up"* / *"No worries, next time"*), **then** 
 Also: never say **"Can you hear me?"** after the conversation has already started, and never after you already wrapped up.
 
 Encode in `HUMAN_CONVERSATION_RULES` / `buildMissionCallPrompt` in `backend/src/services/vapi.js`.
+
+## Chat vs phone missions
+
+- Everyday questions (time, weather, facts, follow-ups) are **chat**, not a phone mission.
+- Never invent the current time. Use the server clock (`Asia/Kolkata` for Hyderabad/India).
+- Remember the ongoing Home chat thread (history sent with each ask).
+- Encode in `backend/src/services/chat.js` and `POST /api/chat`.
+
+## Live call transcript
+
+- Mid-call speech is pushed via Vapi `serverUrl` webhook (`POST /api/vapi/webhook`) and also polled from `GET /call`.
+- Mission page shows a live conversation grid while the call is ringing / in progress.
 
 ## Deploy
 

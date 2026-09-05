@@ -26,8 +26,23 @@ When changing OpenAI / Places / mission planning code:
 # Human greeting on outbound calls
 
 - We say Hi first. ~5s silence (Vapi min) → "Can you hear me?" Once they speak, reply immediately (no dead air).
-- Do not volunteer "this is {name}" unless asked. Do not put the order/message in `firstMessage`.
+- Do not volunteer "this is {name}" unless asked (or the user explicitly requested an intro). Do not put the order/message in `firstMessage`.
 - See AGENTS.md "Human greeting protocol".
+
+# One beat at a time
+
+- `spokenBrief` must be a turn-by-turn guide, never a monologue of stacked questions.
+- On the call: one question/statement → wait for reply → next. See AGENTS.md "One beat at a time".
+
+# Name + pronoun fidelity
+
+- "Anna (my brother)" + he/him → always he/him/his. Never guess she/her from the name. Never respell Anna→Ana.
+- See AGENTS.md "Name + pronoun fidelity" and `extractCalleeIdentity` in `openai.js`.
+
+# Chat vs phone missions
+
+- Time/weather/facts/"tell me…" are chat (`POST /api/chat`). Never guess the current time — use the server clock (Hyderabad = Asia/Kolkata).
+- Remember Home chat history. Only create a mission when the user wants a call/order.
 
 # Real conversation — no instant exits
 

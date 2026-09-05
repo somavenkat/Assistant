@@ -219,7 +219,18 @@ function canPlaceDirectCall({ request, contacts = [] }) {
  */
 async function clarifyRequest({ request, profile, contacts = [], attachments = [], answers = [] }) {
   const { formatAttachmentsForPrompt } = require('./attachments');
+  const { isInformationalQuery } = require('./chat');
   const attachmentBlock = formatAttachmentsForPrompt(attachments);
+
+  if (isInformationalQuery(request, contacts) && !canPlaceDirectCall({ request, contacts })) {
+    return {
+      ready: false,
+      informational: true,
+      questions: [],
+      finalBrief: '',
+      summaryBullets: [],
+    };
+  }
 
   if (canPlaceDirectCall({ request, contacts })) {
     const matched = matchContactsInRequest(request, contacts);
@@ -420,20 +431,33 @@ Return ONLY JSON with:
   ],
   "discoveryQuery": "when the user asked for a CATEGORY of business rather than a specific one, put the search phrase here (e.g. 'car dealerships offering lease deals'). Empty string otherwise.",
   "callObjective": "what success looks like",
-  "spokenBrief": "exactly what to say / convey on the call, based on the user request",
+  "spokenBrief": "NUMBERED turn-by-turn conversation guide. Each line = one thing to say/ask, then WAIT for their reply before the next. Never write a single paragraph that dumps every question at once. Use the SAME name spelling and pronouns the user gave (brother/he/him ≠ she/her).",
   "firstMessageTemplate": "MUST be only Hi. Never put the order or message here.",
-  "notesForCaller": "keep short"
+  "notesForCaller": "remind: one beat per turn; wait for replies; honor name + pronouns",
+  "calleeIdentity": {
+    "nameAsGiven": "exact name spelling from the user",
+    "relation": "brother|sister|mom|dad|friend|null",
+    "pronouns": "he/him|she/her|they/them"
+  }
 }
 
 CRITICAL RULES:
 1. If the user named a saved contact (e.g. "call Mom and say..."), category MUST be "direct_call" and target.phone MUST be that contact's number. Deliver their message.
 2. If the user provided phone number(s), dial those numbers only. Do NOT invent businesses.
-3. If they said what to say, put that in spokenBrief only. firstMessageTemplate must stay "Hi." — do not dump the message as the opening line.
+3. If they said what to say, put that in spokenBrief as a TURN-BY-TURN list (1. ask X — wait 2. then Y …). firstMessageTemplate must stay "Hi." — do not dump the message as the opening line or as one monologue.
 4. Only search for businesses when NO phone and NO matching contact was given.
 5. Never invent phone numbers.
 6. Target names must be REAL, specific businesses (e.g. "Covert Honda Austin"), never placeholders like "Local Car Dealership" or "Nearby Insurance Agency". If you cannot name real businesses confidently, leave "targets" as [] and set "discoveryQuery" instead.
 7. Keep maxTargets <= 3.
-8. For invites/plans/questions to people (pickleball, dinner, hangout, etc.), callObjective and notesForCaller must say: if they decline without a reason, ask why once, react, then wrap up — do not instantly goodbye.`;
+8. For invites/plans/questions to people (pickleball, dinner, hangout, etc.), callObjective and notesForCaller must say: if they decline without a reason, ask why once, react, then wrap up — do not instantly goodbye.
+9. spokenBrief BAD example: "Hi. How are you? What are you doing? I'm Venkat's assistant. What's your plan? How's everything going?"
+10. spokenBrief GOOD example:
+"1. After they greet back: ask how they are
+2. React, then ask what they're doing
+3. If requested: briefly introduce as Venkat's new assistant (own turn)
+4. Ask about plans / how everything is going
+5. Chat a bit, then wrap up warmly"
+11. NAME + PRONOUN FIDELITY (critical): If the user says "ANNA (my brother)" and uses he/him, the callee is male — use he/him/his forever. NEVER guess gender from the first name. Never respell the name (Anna ≠ Ana). Put this in calleeIdentity and notesForCaller.`;
 
   const completion = await client.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -443,7 +467,7 @@ CRITICAL RULES:
       {
         role: 'system',
         content:
-          'You plan simple phone missions. Prefer saved contacts and explicit numbers. Never substitute unrelated businesses.',
+          'You plan simple phone missions. Prefer saved contacts and explicit numbers. Never substitute unrelated businesses. Never invent gender/pronouns from a name — only from explicit cues (brother/sister, he/him, she/her).',
       },
       { role: 'user', content: prompt },
     ],
@@ -492,22 +516,217 @@ CRITICAL RULES:
     }
   }
 
+  applyCalleeIdentity(plan, request);
+
   if (plan.category === 'direct_call') {
     if (!plan.spokenBrief) plan.spokenBrief = request;
+    plan.spokenBrief = ensureTurnByTurnBrief(plan.spokenBrief);
     if (!plan.callObjective) {
       plan.callObjective =
-        "Have a natural conversation: deliver the ask, and if they decline without a reason ask why once, react briefly, then wrap up.";
+        "Have a natural turn-by-turn conversation: one question or statement at a time, wait for replies; if they decline without a reason ask why once, react briefly, then wrap up.";
     }
     if (!plan.notesForCaller) {
       plan.notesForCaller =
-        'Do not instantly goodbye on a bare no/not joining — ask how come, then end warmly.';
+        'One beat per turn — never dump all questions at once. Do not instantly goodbye on a bare no/not joining.';
     }
     plan.firstMessageTemplate = 'Hi.';
     if (!plan.title) plan.title = 'Direct call';
     if (!plan.goal) plan.goal = 'Call the person and deliver the message';
   }
 
+  if (plan.spokenBrief) {
+    plan.spokenBrief = ensureTurnByTurnBrief(plan.spokenBrief);
+  }
+
+  // Re-apply after brief normalization so identity rules stay on top
+  applyCalleeIdentity(plan, request);
+
   return plan;
+}
+
+const MALE_RELATIONS = new Set([
+  'brother',
+  'dad',
+  'father',
+  'husband',
+  'uncle',
+  'son',
+  'boyfriend',
+  'papa',
+  'grandpa',
+  'grandfather',
+]);
+const FEMALE_RELATIONS = new Set([
+  'sister',
+  'mom',
+  'mother',
+  'wife',
+  'aunt',
+  'daughter',
+  'girlfriend',
+  'mama',
+  'grandma',
+  'grandmother',
+]);
+
+/**
+ * Infer exact name spelling + pronouns from the user request.
+ * Never guess gender from the first name alone.
+ */
+function extractCalleeIdentity(request = '', fallbackName = '') {
+  const text = String(request || '');
+  const lower = text.toLowerCase();
+
+  const paren = text.match(
+    /\b([A-Za-z][A-Za-z'-]{1,30}(?:\s+[A-Z][A-Za-z'-]{1,20})?)\s*\(\s*(?:my\s+)?(brother|sister|mom|mother|dad|father|wife|husband|friend|cousin|uncle|aunt|son|daughter|boyfriend|girlfriend|papa|mama|grandpa|grandma)\s*\)/i
+  );
+  const callTo = text.match(
+    /\b(?:call(?:\s+to)?|phone|dial)\s+([A-Za-z][A-Za-z'-]{1,30}(?:\s+[A-Z][A-Za-z'-]{1,20})?)(?=\s*[\(+]|\s+\+|\s+at\b|\s+and\b|,|$)/i
+  );
+
+  let nameAsGiven = String(paren?.[1] || callTo?.[1] || fallbackName || '').trim().replace(/\s+/g, ' ');
+  nameAsGiven = nameAsGiven.replace(/^(?:call|to|phone|dial)\s+/i, '').trim();
+  if (/^(?:call|to|phone|dial)$/i.test(nameAsGiven)) nameAsGiven = '';
+  if (nameAsGiven && nameAsGiven === nameAsGiven.toUpperCase() && nameAsGiven.length > 1) {
+    nameAsGiven = nameAsGiven.charAt(0) + nameAsGiven.slice(1).toLowerCase();
+  }
+
+  let relation = String(paren?.[2] || '').toLowerCase();
+  if (!relation) {
+    for (const r of [...MALE_RELATIONS, ...FEMALE_RELATIONS, 'friend', 'cousin']) {
+      if (new RegExp(`\\b(?:my\\s+)?${r}\\b`).test(lower)) {
+        relation = r;
+        break;
+      }
+    }
+  }
+
+  const heHits = (lower.match(/\b(he|him|his)\b/g) || []).length;
+  const sheHits = (lower.match(/\b(she|her|hers)\b/g) || []).length;
+
+  const forceMale = MALE_RELATIONS.has(relation) || (heHits > 0 && sheHits === 0);
+  const forceFemale = FEMALE_RELATIONS.has(relation) || (sheHits > 0 && heHits === 0);
+
+  let pronouns = 'they/them';
+  let subject = 'they';
+  let object = 'them';
+  let possessive = 'their';
+  if (forceMale && !forceFemale) {
+    pronouns = 'he/him';
+    subject = 'he';
+    object = 'him';
+    possessive = 'his';
+  } else if (forceFemale && !forceMale) {
+    pronouns = 'she/her';
+    subject = 'she';
+    object = 'her';
+    possessive = 'her';
+  }
+
+  const locked = forceMale || forceFemale;
+  const namePart = nameAsGiven ? `"${nameAsGiven}"` : 'the callee';
+  const rule = locked
+    ? `NAME/PRONOUN LOCK: Call ${namePart}${relation ? ` (${relation})` : ''}. ALWAYS use ${pronouns} (${subject}/${object}/${possessive}). NEVER use the opposite gender pronouns. NEVER guess gender from the first name. Spell the name exactly ${namePart} — do not shorten or respell (Anna ≠ Ana). If a gatekeeper/voicemail answers, still use these pronouns ("when ${subject}'s available" / "let ${object} know").`
+    : `NAME LOCK: Call ${namePart}. Do not invent gender from the name; use they/them unless the callee states otherwise. Spell the name exactly as given.`;
+
+  return {
+    nameAsGiven: nameAsGiven || fallbackName || '',
+    relation: relation || null,
+    pronouns,
+    subject,
+    object,
+    possessive,
+    locked,
+    rule,
+  };
+}
+
+function applyCalleeIdentity(plan, request) {
+  if (!plan) return plan;
+  const fallbackName = plan.targets?.[0]?.name || '';
+  const identity = extractCalleeIdentity(request, fallbackName);
+  // Only lock people-calls — not restaurant / business missions
+  if (plan.category !== 'direct_call' && !identity.relation) return plan;
+  const modelIdentity = plan.calleeIdentity && typeof plan.calleeIdentity === 'object' ? plan.calleeIdentity : {};
+
+  plan.calleeIdentity = {
+    ...modelIdentity,
+    ...identity,
+    nameAsGiven: identity.nameAsGiven || modelIdentity.nameAsGiven || fallbackName,
+    pronouns: identity.locked ? identity.pronouns : modelIdentity.pronouns || identity.pronouns,
+    relation: identity.relation || modelIdentity.relation || null,
+    rule: identity.rule,
+  };
+
+  if (plan.calleeIdentity.nameAsGiven && Array.isArray(plan.targets)) {
+    for (const t of plan.targets) {
+      if (!t) continue;
+      // Prefer user's spelling over model/contact generic "Requested number"
+      if (!t.name || t.name === 'Requested number' || /requested number/i.test(t.name)) {
+        t.name = plan.calleeIdentity.nameAsGiven;
+      } else if (identity.nameAsGiven && t.name.toLowerCase() !== identity.nameAsGiven.toLowerCase()) {
+        // If model shortened Ana vs Anna, restore user spelling when close
+        const a = t.name.toLowerCase().replace(/[^a-z]/g, '');
+        const b = identity.nameAsGiven.toLowerCase().replace(/[^a-z]/g, '');
+        if (a.startsWith(b.slice(0, 3)) || b.startsWith(a.slice(0, 3))) {
+          t.name = identity.nameAsGiven;
+        }
+      } else if (identity.nameAsGiven) {
+        t.name = identity.nameAsGiven;
+      }
+    }
+  }
+
+  const lockLine = plan.calleeIdentity.rule;
+  if (lockLine) {
+    const notes = String(plan.notesForCaller || '');
+    if (!notes.includes('PRONOUN LOCK') && !notes.includes('NAME LOCK')) {
+      plan.notesForCaller = notes ? `${lockLine}\n${notes}` : lockLine;
+    }
+    if (!String(plan.spokenBrief || '').includes('PRONOUN LOCK') && !String(plan.spokenBrief || '').includes('NAME LOCK')) {
+      plan.spokenBrief = `${lockLine}\n${plan.spokenBrief || ''}`.trim();
+    }
+    const reqs = Array.isArray(plan.requirements) ? plan.requirements : [];
+    if (!reqs.some((r) => /pronoun|brother|sister|he\/him|she\/her/i.test(String(r)))) {
+      plan.requirements = [
+        `Use name ${plan.calleeIdentity.nameAsGiven || 'as given'} and pronouns ${plan.calleeIdentity.pronouns}`,
+        ...reqs,
+      ];
+    }
+  }
+
+  return plan;
+}
+
+/**
+ * If the model returned a monologue of stacked questions, rewrite as a turn-by-turn guide.
+ */
+function ensureTurnByTurnBrief(brief) {
+  const text = String(brief || '').trim();
+  if (!text) return text;
+
+  const looksNumbered = /(?:^|\n)\s*\d+[.)]/m.test(text) || /(?:^|\n)\s*[-•]/m.test(text);
+  const questionMarks = (text.match(/\?/g) || []).length;
+  const stackedInOneLine =
+    !text.includes('\n') && (questionMarks >= 2 || /how are you[^.?!]*what/i.test(text));
+
+  if (looksNumbered && !stackedInOneLine) return text;
+  if (!stackedInOneLine && questionMarks < 2) return text;
+
+  // Split on sentence boundaries / question marks into beats
+  const parts = text
+    .replace(/\s+/g, ' ')
+    .split(/(?<=[.!?])\s+/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .filter((p) => !/^hi\.?$/i.test(p));
+
+  if (parts.length <= 1) {
+    return `Turn-by-turn (one thing per reply):\n1. After they greet back: cover this naturally — ${text}\n2. Chat briefly based on their answers, then wrap up warmly.`;
+  }
+
+  const lines = parts.map((p, i) => `${i + 1}. ${p.replace(/^Hi\.\s*/i, '')}`);
+  return `Turn-by-turn (say one line, wait for their reply, then continue):\n${lines.join('\n')}`;
 }
 
 /**
@@ -649,4 +868,6 @@ module.exports = {
   findRestaurantWithOpenAI,
   parseOrderRequest,
   summarizeMissionResults,
+  extractCalleeIdentity,
+  applyCalleeIdentity,
 };

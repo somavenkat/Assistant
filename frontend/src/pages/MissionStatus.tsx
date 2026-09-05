@@ -11,7 +11,7 @@ import {
   IonToolbar,
   IonBackButton,
 } from '@ionic/react';
-import { executeMission, getMission, retryMission, type MissionRecord } from '../api';
+import { executeMission, getMission, hangupMission, retryMission, type MissionRecord } from '../api';
 import CallTranscript from '../components/CallTranscript';
 
 export default function MissionStatus() {
@@ -22,6 +22,7 @@ export default function MissionStatus() {
   const [loading, setLoading] = useState(true);
   const [executing, setExecuting] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [hangingUp, setHangingUp] = useState(false);
 
   const isPreview = mission?.status === 'preview';
   const failed = mission?.status === 'failed';
@@ -30,10 +31,12 @@ export default function MissionStatus() {
     mission?.status === 'completed_with_errors';
   const liveCallInProgress = (mission?.targets || []).some(
     (t) =>
-      t.callId &&
-      !['ended', 'completed', 'failed', 'busy', 'no-answer'].includes(String(t.status))
+      t.live ||
+      (t.callId &&
+        !['ended', 'completed', 'failed', 'busy', 'no-answer'].includes(String(t.status)))
   );
   const dialingNow = (mission?.targets || []).some((t) => t.status === 'dialing');
+  const canHangUp = Boolean(liveCallInProgress || dialingNow) && !isPreview;
   const pending =
     mission &&
     !isPreview &&
@@ -48,7 +51,12 @@ export default function MissionStatus() {
             !['ended', 'completed', 'failed', 'busy', 'no-answer'].includes(t.status)
         )));
   const showRetry =
-    Boolean(mission?.canRetry) && !isPreview && !liveCallInProgress && !dialingNow && !executing;
+    Boolean(mission?.canRetry) &&
+    !isPreview &&
+    !liveCallInProgress &&
+    !dialingNow &&
+    !executing &&
+    !hangingUp;
 
   async function refresh() {
     if (!id) return;
@@ -72,14 +80,17 @@ export default function MissionStatus() {
     const shouldPoll =
       pending ||
       retrying ||
+      hangingUp ||
       mission.status === 'starting' ||
       mission.status === 'calling' ||
       liveCallInProgress ||
       dialingNow;
     if (!shouldPoll) return;
-    const timer = setInterval(refresh, 4000);
+    // Faster while live so the chat grid updates during the call
+    const ms = liveCallInProgress || dialingNow ? 1200 : 4000;
+    const timer = setInterval(refresh, ms);
     return () => clearInterval(timer);
-  }, [id, mission?.status, pending, retrying, liveCallInProgress, dialingNow, isPreview]);
+  }, [id, mission?.status, pending, retrying, hangingUp, liveCallInProgress, dialingNow, isPreview]);
 
   async function startCalls() {
     if (!id) return;
@@ -109,12 +120,40 @@ export default function MissionStatus() {
     }
   }
 
+  async function hangUpCalls() {
+    if (!id) return;
+    setHangingUp(true);
+    setError('');
+    try {
+      const data = await hangupMission(id);
+      setMission(data);
+    } catch (e: any) {
+      setError(e.message || 'Could not hang up');
+      await refresh();
+    } finally {
+      setHangingUp(false);
+    }
+  }
+
   function targetStatusLabel(t: MissionRecord['targets'][0]) {
+    if (t.live || t.status === 'in-progress' || t.status === 'dialing') {
+      if (t.status === 'queued') return 'Calling…';
+      if (t.status === 'ringing') return 'Ringing…';
+      if (t.status === 'dialing') return 'Dialing…';
+      return 'Live on the line…';
+    }
     if (t.outcome) return t.outcome;
     if (t.status === 'queued') return 'Calling…';
     if (t.status === 'ringing') return 'Ringing…';
-    if (t.status === 'in-progress' || t.status === 'dialing') return 'On the line…';
     return t.status;
+  }
+
+  function isTargetLive(t: MissionRecord['targets'][0]) {
+    return Boolean(
+      t.live ||
+        (t.callId &&
+          !['ended', 'completed', 'failed', 'busy', 'no-answer'].includes(String(t.status)))
+    );
   }
 
   const callableTargets = (mission?.targets || []).filter((t) => t.phone);
@@ -185,8 +224,22 @@ export default function MissionStatus() {
 
               {mission.plan.spokenBrief && (
                 <div className="meta-block">
-                  <h3>What we'll say on the call</h3>
-                  <p>{mission.plan.spokenBrief}</p>
+                  <h3>How we'll talk on the call</h3>
+                  <p className="clarify-why" style={{ marginBottom: '0.5rem' }}>
+                    One thing at a time — wait for their reply before the next.
+                  </p>
+                  {mission.plan.calleeIdentity?.nameAsGiven && (
+                    <p className="clarify-why" style={{ marginBottom: '0.5rem' }}>
+                      Calling {mission.plan.calleeIdentity.nameAsGiven}
+                      {mission.plan.calleeIdentity.relation
+                        ? ` (${mission.plan.calleeIdentity.relation})`
+                        : ''}
+                      {mission.plan.calleeIdentity.pronouns
+                        ? ` · pronouns ${mission.plan.calleeIdentity.pronouns}`
+                        : ''}
+                    </p>
+                  )}
+                  <p style={{ whiteSpace: 'pre-wrap' }}>{mission.plan.spokenBrief}</p>
                   {mission.plan.callObjective && (
                     <p className="clarify-why" style={{ marginTop: '0.5rem' }}>
                       Goal: {mission.plan.callObjective}
@@ -237,20 +290,21 @@ export default function MissionStatus() {
                     {t.source && isPreview && (
                       <p className="clarify-why">Source: {t.source.replace(/_/g, ' ')}</p>
                     )}
-                    {t.error != null && !t.transcript && (
+                    {t.error != null && !t.transcript && !isTargetLive(t) && (
                       <p className="error-text">
                         {typeof t.error === 'string' ? t.error : JSON.stringify(t.error)}
                       </p>
                     )}
-                    {t.transcript && (
+                    {(t.transcript || isTargetLive(t)) && (
                       <>
                         <p style={{ marginTop: '0.75rem', marginBottom: 0 }}>
-                          <strong>Transcript</strong>
+                          <strong>{isTargetLive(t) ? 'Live conversation' : 'Transcript'}</strong>
                         </p>
                         <CallTranscript
-                          transcript={t.transcript}
+                          transcript={t.transcript || ''}
                           callerName={mission.profile.name}
                           calleeName={t.name}
+                          live={isTargetLive(t)}
                         />
                       </>
                     )}
@@ -295,11 +349,15 @@ export default function MissionStatus() {
                 </div>
               )}
 
-              {(pending || retrying || dialingNow) && (
+              {(pending || retrying || dialingNow || hangingUp) && (
                 <p className="lede" style={{ marginTop: '1rem' }}>
-                  {retrying || mission.status === 'starting' || dialingNow
-                    ? 'Starting calls…'
-                    : 'Waiting for call to finish…'}{' '}
+                  {hangingUp
+                    ? 'Hanging up…'
+                    : retrying || mission.status === 'starting' || dialingNow
+                      ? 'Starting calls…'
+                      : liveCallInProgress
+                        ? 'Call in progress — live chat updates below.'
+                        : 'Waiting for call to finish…'}{' '}
                   this page refreshes automatically.
                 </p>
               )}
@@ -319,12 +377,25 @@ export default function MissionStatus() {
                     <IonButton fill="outline" onClick={refresh}>
                       Refresh
                     </IonButton>
+                    {canHangUp && (
+                      <IonButton
+                        className="hangup-btn"
+                        color="danger"
+                        disabled={hangingUp}
+                        onClick={hangUpCalls}
+                      >
+                        {hangingUp ? <IonSpinner name="crescent" /> : 'Hang up'}
+                      </IonButton>
+                    )}
                     {showRetry && (
                       <IonButton disabled={retrying} onClick={retryCalls}>
                         {retrying ? <IonSpinner name="crescent" /> : 'Retry call'}
                       </IonButton>
                     )}
-                    <IonButton fill={showRetry ? 'outline' : 'solid'} onClick={() => navigate('/home')}>
+                    <IonButton
+                      fill={showRetry || canHangUp ? 'outline' : 'solid'}
+                      onClick={() => navigate('/home')}
+                    >
                       New request
                     </IonButton>
                   </>

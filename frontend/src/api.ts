@@ -15,6 +15,7 @@ export type MissionTarget = {
   error?: unknown;
   outcome?: string;
   canRetry?: boolean;
+  live?: boolean;
   source?: string;
   confidence?: string;
 };
@@ -56,6 +57,16 @@ export type MissionRecord = {
     discoveryQuery?: string;
     firstMessageTemplate?: string;
     processSteps?: Array<{ step: number; title: string; detail: string }>;
+    calleeIdentity?: {
+      nameAsGiven?: string;
+      relation?: string | null;
+      pronouns?: string;
+      subject?: string;
+      object?: string;
+      possessive?: string;
+      locked?: boolean;
+      rule?: string;
+    };
   };
   targets: MissionTarget[];
   attachments?: MissionAttachment[];
@@ -89,9 +100,20 @@ export type ClarifyAnswer = {
 
 export type ClarifyResult = {
   ready: boolean;
+  informational?: boolean;
   questions: ClarifyQuestion[];
   finalBrief?: string;
   summaryBullets?: string[];
+};
+
+export type ChatMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+
+export type ChatResult = {
+  answer: string;
+  mode?: string;
 };
 
 async function postApi(path: string, payload: Record<string, unknown>, files?: File[]) {
@@ -211,4 +233,30 @@ export async function retryMission(id: string, targetIds?: string[]): Promise<Mi
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Could not retry call');
   return data;
+}
+
+export async function askChat(
+  message: string,
+  history: ChatMessage[] = [],
+  profile?: MissionRecord['profile']
+): Promise<ChatResult> {
+  const res = await fetch(`${API_BASE}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, history, profile }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not answer');
+  return data;
+}
+
+export async function hangupMission(id: string, targetIds?: string[]): Promise<MissionRecord> {
+  const res = await fetch(`${API_BASE}/missions/${id}/hangup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(targetIds?.length ? { targetIds } : {}),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || data.mission?.error || 'Could not hang up');
+  return data.mission || data;
 }

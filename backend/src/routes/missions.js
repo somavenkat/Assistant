@@ -9,7 +9,8 @@ const {
   summarizeMissionResults,
 } = require('../services/openai');
 const { lookupBusiness, toE164US } = require('../services/places');
-const { placeMissionCall, getCall } = require('../services/vapi');
+const { placeMissionCall, getCall, endCall, extractTranscriptFromCall, upsertLiveTurn } = require('../services/vapi');
+const { answerChat, isInformationalQuery } = require('../services/chat');
 const { processUploads } = require('../services/attachments');
 const { createMemoryMap, persistMission, deleteMission } = require('../services/store');
 
@@ -62,6 +63,7 @@ function isUnreachableTarget(target) {
   if (reason.includes('customer-busy')) return true;
   if (reason.includes('voicemail') || reason.includes('machine')) return true;
   if (reason.includes('silence-timed-out')) return true;
+  if (reason.includes('manually-canceled') || reason.includes('user-hangup')) return true;
   if (status === 'ended' && !(target.transcript || '').trim()) return true;
   return false;
 }
@@ -74,6 +76,11 @@ function describeTargetOutcome(target) {
   const transportTip = explainCallFailure(reason, target.phone);
   if (transportTip && reason.includes('error-get-transport')) return transportTip;
 
+  if (reason.includes('manually-canceled') || reason.includes('user-hangup') || reason.includes('customer-ended-call')) {
+    if (reason.includes('user-hangup') || reason.includes('manually-canceled')) {
+      return `You hung up the call to ${name}.`;
+    }
+  }
   if (status === 'no-answer' || reason.includes('customer-did-not-answer')) {
     return `${name} didn't pick up — they may be unavailable right now.`;
   }
@@ -171,8 +178,10 @@ function publicMission(mission) {
     canRetry: (mission.targets || []).some(isRetryableTarget),
     targets: (mission.targets || []).map((t) => ({
       ...t,
+      controlUrl: undefined,
       outcome: describeTargetOutcome(t),
       canRetry: isRetryableTarget(t),
+      live: Boolean(t.callId && !TERMINAL_STATUSES.has(String(t.status))),
     })),
     attachments: (mission.attachments || []).map((a) => ({
       id: a.id,
@@ -407,10 +416,12 @@ async function dialTargets(mission, { onlyTargetIds } = {}) {
         plan: mission.plan,
         target,
         attachments: mission.attachments || [],
+        missionId: mission.id,
       });
       target.callId = call.id;
       target.status = call.status || 'queued';
       target.callCreatedAt = call.createdAt;
+      target.controlUrl = call.monitor?.controlUrl || call.controlUrl || null;
     } catch (err) {
       target.status = 'failed';
       target.error = err.response?.data || err.message;
@@ -445,11 +456,12 @@ async function refreshMissionCalls(mission) {
       const call = await getCall(target.callId);
       target.status = call.status || target.status;
       target.endedReason = call.endedReason || target.endedReason || '';
-      target.transcript =
-        call.artifact?.transcript ||
-        call.transcript ||
-        target.transcript ||
-        '';
+      target.controlUrl =
+        call.monitor?.controlUrl || call.controlUrl || target.controlUrl || null;
+      const nextTranscript = extractTranscriptFromCall(call);
+      if (nextTranscript && nextTranscript.length >= String(target.transcript || '').length) {
+        target.transcript = nextTranscript;
+      }
       const tip = explainCallFailure(target.endedReason, target.phone);
       if (tip && isUnreachableTarget(target)) target.error = tip;
       if (!TERMINAL_STATUSES.has(String(target.status))) {
@@ -560,6 +572,92 @@ function parseAnswers(raw) {
 /**
  * Ask follow-up questions until we know enough to place the call.
  */
+function findMissionByCallId(callId, hintMissionId) {
+  if (hintMissionId && missions.has(hintMissionId)) {
+    const hinted = missions.get(hintMissionId);
+    if ((hinted.targets || []).some((t) => t.callId === callId || !callId)) return hinted;
+  }
+  if (!callId) return null;
+  for (const mission of missions.values()) {
+    if ((mission.targets || []).some((t) => t.callId === callId)) return mission;
+  }
+  return null;
+}
+
+function applyVapiWebhook(body = {}) {
+  const message = body.message || body;
+  const type = String(message.type || body.type || '');
+  const call = message.call || body.call || {};
+  const callId = call.id || message.callId || body.callId;
+  const meta = call.metadata || message.metadata || body.metadata || {};
+  const mission = findMissionByCallId(callId, meta.missionId);
+  if (!mission) return null;
+  const target =
+    (mission.targets || []).find((t) => t.id === meta.targetId && t.callId === callId)
+    || (mission.targets || []).find((t) => t.callId === callId);
+  if (!target) return null;
+
+  if (type === 'status-update' && message.status) {
+    target.status = message.status;
+  }
+
+  if (type === 'transcript' || type.startsWith('transcript')) {
+    const role = message.role || 'user';
+    const text = message.transcript || message.message || '';
+    const isPartial = String(message.transcriptType || '').toLowerCase() === 'partial';
+    upsertLiveTurn(target, role, text, isPartial);
+  }
+
+  if (type === 'conversation-update') {
+    const list = message.messages || message.conversation || [];
+    if (Array.isArray(list) && list.length) {
+      target.liveTurns = [];
+      for (const m of list) {
+        const role = m.role || m.speaker || '';
+        const text = m.message || m.transcript || m.content || m.text || '';
+        if (['system', 'tool', 'function'].includes(String(role).toLowerCase())) continue;
+        upsertLiveTurn(target, role, text, false);
+      }
+    }
+  }
+
+  if (type === 'end-of-call-report') {
+    const artifact = message.artifact || {};
+    const full = extractTranscriptFromCall({ artifact, ...call, transcript: artifact.transcript });
+    if (full) target.transcript = full;
+    target.status = 'ended';
+    target.endedReason = message.endedReason || target.endedReason || '';
+  }
+
+  mission.updatedAt = new Date().toISOString();
+  save(mission);
+  return mission;
+}
+
+router.post('/vapi/webhook', async (req, res) => {
+  try {
+    applyVapiWebhook(req.body || {});
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('[vapi webhook]', err);
+    return res.status(200).json({ ok: false });
+  }
+});
+
+router.post('/chat', async (req, res) => {
+  try {
+    const message = String(req.body?.message || '').trim();
+    const history = Array.isArray(req.body?.history) ? req.body.history : [];
+    const profile = parseProfile(req.body?.profile) || {};
+    if (!message) return res.status(400).json({ error: 'message is required' });
+    const result = await answerChat({ message, history, profile });
+    return res.json(result);
+  } catch (err) {
+    console.error('[chat] failed', err);
+    return res.status(500).json({ error: err.message || 'Could not answer' });
+  }
+});
+
 router.post('/clarify', maybeUpload, async (req, res) => {
   try {
     const request = req.body?.request;
@@ -816,6 +914,65 @@ router.post('/missions/:id/retry', async (req, res) => {
   } catch (err) {
     console.error('[missions] retry failed', err);
     return res.status(500).json({ error: err.message || 'Failed to retry mission' });
+  }
+});
+
+/**
+ * Manually hang up live / ringing calls for this mission.
+ */
+router.post('/missions/:id/hangup', async (req, res) => {
+  try {
+    const mission = missions.get(req.params.id);
+    if (!mission) return res.status(404).json({ error: 'Mission not found' });
+    if (mission.status === 'preview') {
+      return res.status(400).json({ error: 'No call to hang up yet.' });
+    }
+
+    const requestedIds = Array.isArray(req.body?.targetIds) ? req.body.targetIds : null;
+    const live = mission.targets.filter((t) => {
+      if (!t.callId) return false;
+      if (requestedIds && !requestedIds.includes(t.id)) return false;
+      return !TERMINAL_STATUSES.has(String(t.status)) || t.status === 'dialing';
+    });
+
+    if (!live.length) {
+      return res.status(400).json({ error: 'No active call to hang up.' });
+    }
+
+    const errors = [];
+    for (const target of live) {
+      try {
+        const result = await endCall(target.callId, target.controlUrl);
+        const after = result.call || (await getCall(target.callId).catch(() => null));
+        const nextTranscript = extractTranscriptFromCall(after);
+        if (nextTranscript) target.transcript = nextTranscript;
+        target.status = 'ended';
+        target.endedReason = after?.endedReason || 'user-hangup';
+        target.error = 'You hung up the call.';
+        target.controlUrl = null;
+      } catch (err) {
+        errors.push(`${target.name}: ${err.message}`);
+        target.status = 'ended';
+        target.endedReason = 'user-hangup';
+        target.error = err.message || 'Hang up failed';
+      }
+    }
+
+    mission.updatedAt = new Date().toISOString();
+    save(mission);
+    await refreshMissionCalls(mission);
+
+    if (errors.length && live.length === errors.length) {
+      return res.status(502).json({
+        error: errors.join('; '),
+        mission: publicMission(mission),
+      });
+    }
+
+    return res.json(publicMission(mission));
+  } catch (err) {
+    console.error('[missions] hangup failed', err);
+    return res.status(500).json({ error: err.message || 'Failed to hang up' });
   }
 });
 
