@@ -1,0 +1,24 @@
+name: Keep About website off the host URL
+
+# Vercel auto-fills GitHub "About → Website" with the production host when empty.
+# Keep it pointed at this repo instead so the public page never advertises the host.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  about:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Point About website at the GitHub repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X PATCH "repos/${{ github.repository }}" \
+            -f homepage="https://github.com/${{ github.repository }}" \
+            --jq '{homepage}'
