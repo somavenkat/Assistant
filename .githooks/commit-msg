@@ -1,0 +1,8 @@
+#!/bin/sh
+# Strip Cursor co-author trailers so GitHub contributors stay the human author only.
+MSG_FILE="$1"
+[ -f "$MSG_FILE" ] || exit 0
+tmp="${MSG_FILE}.tmp"
+# Remove Cursor co-author lines and any blank line left immediately before EOF from that.
+sed '/^Co-authored-by: Cursor <cursoragent@cursor.com>$/d' "$MSG_FILE" > "$tmp" && mv "$tmp" "$MSG_FILE"
+exit 0

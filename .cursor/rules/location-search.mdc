@@ -1,0 +1,54 @@
+---
+description: Always bias business/restaurant search to the user's profile location; ask order items before pickup dials
+alwaysApply: true
+---
+
+# Location-first business search
+
+When changing OpenAI / Places / mission planning code:
+
+- NEVER look up a restaurant or business by brand name alone.
+- ALWAYS pass `profile.area`, `profile.latitude`, and `profile.longitude` into search.
+- Prefer the nearest location within ~20–25 miles; reject hours-away franchise hits (e.g. Prosper when user is in Liberty Hill).
+- See root `AGENTS.md` and `backend/src/services/location.js`.
+
+# Pickup orders need items first
+
+- "call X and make a pickup order" with no menu items → ask what to order before dialing.
+- "enquiry / ask if they have X" is NOT an order — dial immediately; never ask what to order.
+- Do not use the direct-call shortcut for restaurant pickup/order placement.
+- See `needsOrderItemsBeforeCall` / `isMenuAvailabilityInquiry` in `backend/src/services/openai.js` and `AGENTS.md`.
+
+# Stay on live calls
+
+- If the callee is unclear, ask them to repeat/clarify — do not hang up mid-call.
+- See AGENTS.md "Stay on the line" and `buildMissionCallPrompt` in `backend/src/services/vapi.js`.
+
+# Human greeting on outbound calls
+
+- We say Hi first. ~15s silence at pickup only → "Can you hear me?" Once they speak, reply immediately (no dead air). Never after goodbye.
+- Do not volunteer "this is {name}" unless asked (or the user explicitly requested an intro). Do not put the order/message in `firstMessage`.
+- See AGENTS.md "Human greeting protocol".
+
+# One beat at a time
+
+- `spokenBrief` must be a turn-by-turn guide, never a monologue of stacked questions.
+- On the call: one question/statement → wait for reply → next. See AGENTS.md "One beat at a time".
+
+# Name + pronoun fidelity
+
+- "Anna (my brother)" + he/him → always he/him/his. Never guess she/her from the name. Never respell Anna→Ana.
+- See AGENTS.md "Name + pronoun fidelity" and `extractCalleeIdentity` in `openai.js`.
+
+# Chat vs phone missions
+
+- Time/weather/facts/"tell me…" are chat (`POST /api/chat`). Never guess the current time — use the server clock (Hyderabad = Asia/Kolkata).
+- Remember Home chat history. Only create a mission when the user wants a call/order.
+- After chatting, "make a call" / "call them" uses the **entire thread**. Ask only if who/what is still missing. Otherwise dial that place and speak from the chat instructions. See AGENTS.md "Chat first, then make a call" and `conversation.js`.
+
+# Real conversation — no instant exits
+
+- Bare "no" / "not joining" without a reason → ask why once, react, then wrap up. Do not instantly "talk later / goodbye".
+- Instant accept only when they already gave a reason, answered the full ask, or are clearly rushing off.
+- Never "Can you hear me?" after the chat has started or after goodbye.
+- See AGENTS.md "Real conversation — when to accept instantly vs ask why" and `HUMAN_CONVERSATION_RULES` in `vapi.js`.
